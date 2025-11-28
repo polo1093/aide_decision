@@ -188,7 +188,9 @@ class ScanTable:
 
 
     def scan_bouton(self, position):
-        return None, None
+        img = self._extract_patch(position)
+        texte, confidence = self.ocr.read_text(img)      
+        return texte if texte else None
 
 
     def is_lose(self) -> bool:

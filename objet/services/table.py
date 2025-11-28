@@ -80,7 +80,9 @@ class Table:
                 position_etat= player.coordonate_etat )
             player.apply_scan(etat,money)
             
-            
+        for b in self.buttons:
+            texte = self.scan.scan_bouton(position= b.coordonate)
+            b.apply_scan(texte)
             
 
                 

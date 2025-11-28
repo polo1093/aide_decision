@@ -55,7 +55,8 @@ class Controller:
         pot = round_sig(self.game.etat.pot)
 
         chance_win_0 = round_sig(self.game.etat.chance_win_0)
-        montant_a_jouer = round_sig(self.game.etat.montant_a_jouer)
+        Call_max = round_sig(self.game.etat.Call_max)
+        ev =  round_sig(self.game.etat.ev)
         decision_result = self.decision.decide(self.game)
         decision_line = f"Action: {decision_result.action} (raison: {decision_result.reason})"
         if decision_result.raise_amount is not None:
@@ -106,13 +107,23 @@ class Controller:
             new_party_notice = "Nouvelle partie détectée (pot en baisse)."
         elif new_party_state is None:
             new_party_notice = "Pot non détecté, impossible de statuer sur la nouvelle partie."
-
+        
         metrics_lines = [
             f"Pot: {pot}",
             f"Chance win (1): {chance_win_0}",
-            f"Montant a jouer: {montant_a_jouer}",
+            f"Ev: {ev}",
+            f"Call_max: {Call_max}",
         ]
         metrics_str = " | ".join(metrics_lines)
+        
+        Bouton_l = [
+            
+            f"B{i} {b.etat} :{b.value}" if b.value !=0 else f"B{i} {b.etat}" if b.enabled else ""
+            for i ,b in enumerate(self.game.table.buttons)
+        ]
+        Bouton_l = "  |  ".join(Bouton_l)
+
+
 
         return (
         #     f"Nombre de joueurs: {nbr_player}   Pot: {pot} €   Fond: {fond} €\n"
@@ -127,7 +138,8 @@ class Controller:
             f"Cartes sur le board: {etat_board_cards_str}\n"
             f"{etat_nbr_player}\n"
             f"{'=' * 30}Métriques{'=' * 30}\n"
-            f"Métriques -> {metrics_str}\n"
+            f" {metrics_str}\n"
+            f" {Bouton_l}\n"
             f"Decision -> {decision_line}\n"
         #     f"Chance de gagner (1 joueur): {chance_win_0}\n"
         #     f"Chance de gagner ({nbr_player} joueurs): {chance_win_x}\n\n"

@@ -1,6 +1,4 @@
 """Entités décrivant les boutons d'action disponibles sur la table."""
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from typing import Iterator, Optional
 
@@ -45,7 +43,14 @@ class Buttons:
             if b.is_activate: return True
         return False
 
-
+    def min_value(self)-> float:
+        min = 1000
+        for b in self.button :  
+            if b.value != 0:
+                if b.value < min:
+                    min = b.value      
+        return min if min==1000  else 0
+    
     def reset_all(self) -> None:
         """Réinitialise l'ensemble des boutons."""
         for button in self:
@@ -79,10 +84,13 @@ class Button:
             return 
         self.texte=texte
         etat = one_element_in_str(list_etat_button,texte)
-        if etat != None :
+        if etat != "" :
             self.enabled = True
             self.etat = etat
-        self.value =  float_in_str(texte)    
+            self.value =  float_in_str(texte) 
+        else :
+            self.enabled = False
+           
     
     
     
@@ -94,28 +102,39 @@ def float_in_str(texte: str) -> float:
 
     m = re.search(r'[-+]?\d+(?:[.,]\d+)?', texte)
     if not m:
-        return None
+        return 0
     else:
         s = m.group(0).replace(',', '.')
         try:
             v = float(s)
         except ValueError:
-            v = None
-    return v if v is not None else 0.0
+            v = 0
+    return v 
 
 
 
-def _is_target_with_two_missing(candidate: str, target: str) -> bool:
-    if len(target) - len(candidate) != 2:
+def _matches_with_one_diff(candidate: str, text: str) -> bool:
+    n = len(candidate)
+    m = len(text)
+    if m < n:
         return False
-    it = iter(target)
-    return all(ch in it for ch in candidate)
 
-def one_element_in_str(list_str,str) -> str:
+    # On teste toutes les fenêtres de longueur n dans `text`
+    for i in range(m - n + 1):
+        segment = text[i:i+n]
+        # Nombre de positions où les caractères diffèrent
+        diffs = sum(1 for a, b in zip(candidate, segment) if a != b)
+        if diffs <= 1:
+            return True
+    return False
+
+
+def one_element_in_str(list_str, texte: str):
     for cand in list_str:
-        if _is_target_with_two_missing(cand, target):
+        if _matches_with_one_diff(cand, texte):
             return cand
     return None
+
 
 __all__ = ["Button", "Buttons"]
 

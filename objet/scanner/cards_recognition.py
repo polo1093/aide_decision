@@ -403,11 +403,13 @@ import pyscreeze
 ACTIONS_DIR = Path(__file__).resolve().parents[2] / "config" / "PMU"
 
 ACTION_TEMPLATES: Dict[str, Path] = {
-    "play": ACTIONS_DIR / "play.png",
-    "CHECK": ACTIONS_DIR / "CHECK.png",
-    "paid": ACTIONS_DIR / "PAIE.png",
-    "RELANCER": ACTIONS_DIR / "RELANCER.png",
+    
+    "CHECK": ACTIONS_DIR / "check.png",
+    "paid": ACTIONS_DIR / "paie.png",
+    "RELANCER": ACTIONS_DIR / "relance.png",
     "fold": ACTIONS_DIR / "fold.png",
+    "No_start": ACTIONS_DIR / "sit_out.png",
+    "play": ACTIONS_DIR / "play.png",
     
 }
  

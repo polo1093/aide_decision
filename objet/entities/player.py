@@ -28,7 +28,7 @@ class Fond:
         # repr compact, mais tu peux faire plus verbeux si tu veux
         return f"Fond(amount={self.amount})"  
     def __str__(self) -> str:
-        return f"{self.amount:.2f}"
+        return f"{self.amount:.2f}" if self.amount else "0"
     
              
 @dataclass
@@ -65,7 +65,7 @@ class Players:
             
     
     def cal_nbr_player_start(self)-> int:
-        self.nbr_player_start = sum([self.player[i].is_activate() for i in range(5)])
+        self.nbr_player_start = sum([self.player[i].active_at_start for i in range(5)])
     
     def cal_nbr_player_active(self)-> int:
         self.nbr_player_active = sum([self.player[i].is_activate() for i in range(5)])
@@ -107,14 +107,15 @@ class Player:
             
     
     def apply_scan(self, str_etat, money ) -> None :
-        if money is None:
-            raise ValueError("Impossible de lire le stack du joueur.")
-        self.refresh_etat(str_etat, money)
-        self.refresh_fond(money)
+        if money is not None:
+            self.refresh_etat(str_etat, money)
+            self.refresh_fond(money)
         if self.fond_start_Party == 0:
             self.active_at_start = False
         
     def refresh_etat(self, etat: str, money: float) -> None:
+        if etat == "No_start":
+            self.active_at_start = False
         if etat == "play":
             self.etat = "play"
             self.etat_modified_this_round = True
@@ -125,6 +126,7 @@ class Player:
         if  etat == "fold":
             self.etat = "fold"
             self.etat_modified_this_round = True
+            self.active_at_start = True
         if etat == "CHECK" :
             self.etat = "play"
             self.etat_modified_this_round = True           

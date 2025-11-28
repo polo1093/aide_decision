@@ -32,11 +32,12 @@ class Etat:
     """Stocke l'état courant de la table et calcule les décisions."""
     cards: CardsState = field(default_factory=CardsState)
     players: Players = field(default_factory=Players)
-    cards_change: int = 0
     chance_win_0: Optional[float] = None
-    chance_win: Optional[float] = None
     pot: Optional[float] = None
-    montant_a_jouer: Optional[float] = None
+    montant_a_jouer: float = None
+    cards_change : int = 0
+    ev : float = 0
+    Call_max : float = 0
 
     def __post_init__(self) -> None:
         """Garantit que les états dépendants existent."""
@@ -45,22 +46,15 @@ class Etat:
 
     
     
-    
-    def _require_poker_card(self, card: Card, context: str):
-        poker_card = card.poker_card
-        if poker_card is None:
-            raise ValueError(f"Carte manquante ou invalide pour {context}.")
-        return poker_card
+   
 
     def _cal_win_chances(self) -> float:
         """Calcule les chances de gain en fonction des cartes connues."""
 
         me_cards = self.cards.me_cards()
-        if len(me_cards) != 2:
-            raise ValueError("Les cartes du joueur ne sont pas completes ou invalides.")
 
         hero_cards = [
-            self._require_poker_card(card, f"main heros {idx + 1}")
+            card.poker_card
             for idx, card in enumerate(me_cards)
         ]
 
@@ -70,33 +64,49 @@ class Etat:
             raise ValueError("Le nombre de cartes sur le board est incorrect.")
 
         board_poker_cards = [
-            self._require_poker_card(card, f"board card {idx + 1}")
+            card.poker_card
             for idx, card in enumerate(board_cards)
         ]
         chance_win_0 = HandEvaluator.evaluate_hand(hero_cards, board_poker_cards)
         self.chance_win_0 = chance_win_0
-        self.chance_win = chance_win_0
+        
+        self.chance_win = chance_win_0**(self.players.nbr_player_start -1 )
+        
         return chance_win_0
- 
-
-  
-  
 
 
+    def _cal_EV(self,to_call = 0.02)-> float:
+        P = self.chance_win
+        Pot = self.pot                # pot avant ton call
+        C = to_call                   # montant à payer maintenant
+        return P * (Pot + C) - C
+        
 
+    def _cal_max_call(self) -> None:
+        P = self.chance_win
+        Pot = self.pot
+        self.Call_max = (P * Pot) / (1.0 - P)
+        # >0: call OK, <0: fold
+
+    
+    def _cal(self):
+        if self.cards.is_ready_for_cal():
+            self._cal_win_chances()
+            self.ev = self._cal_EV()
+            self._cal_max_call()
+            self._calcul_montant_a_jouer()
+    
+    
     def _calcul_montant_a_jouer(self) -> float:
-        if self.chance_win is None:
-            raise ValueError("Impossible de calculer le montant : chance_win manquant.")
-        if self.pot is None:
-            raise ValueError("Impossible de calculer le montant : pot manquant.")
-        if self.players.nbr_player_start <= 0:
-            raise ValueError("Impossible de calculer le montant : nombre de joueurs invalide.")
 
-        denominateur = 1 - (self.chance_win * (self.players.nbr_player_start + 1))
-        if denominateur == 0:
-            raise ValueError("Division par zéro lors du calcul du montant à jouer.")
-        self.montant_a_jouer = (self.chance_win * self.pot) / denominateur
+        denominateur = 1 - (self.chance_win_0 * (self.players.nbr_player_start + 1))
+
+        self.montant_a_jouer = (self.chance_win_0* self.pot) / denominateur
         return self.montant_a_jouer
+    
+    
+    
+    
     
     def update_players(self, players: Players) -> None:
         self.players = players
@@ -134,9 +144,9 @@ class Etat:
     def update(self, *, cards_state: CardsState, players: Players, pot: Optional[float]) -> None:
         self.update_cards_state(cards_state)
         self.update_players(players)
-        self.pot = pot
-        self._cal_win_chances()
-        self._calcul_montant_a_jouer()
+        self.pot = pot if pot else self.pot
+        self._cal()
+
 
 @dataclass
 class Game:

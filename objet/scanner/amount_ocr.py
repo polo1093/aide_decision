@@ -28,7 +28,7 @@ PatchType = Union[np.ndarray, Image.Image]
 
 def _normalize_whitespace(text: str) -> str:
     """Collapse multiple whitespace characters into a single space."""
-    return re.sub(r"\s+", " ", text).strip()
+    return re.sub(r"\s+", " ", text).strip().lower()
 
 
 def _strip_currency_symbols(text: str) -> str:

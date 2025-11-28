@@ -204,7 +204,12 @@ class CardsState:
             ]
 
     # --- API pratique pour le reste du code ----------------------------------
-
+    def is_ready_for_cal(self) -> bool :
+        for card  in self.me_cards():
+            if card.poker_card is None:
+                return False    
+        return True
+        
     def me_cards(self) -> List[Card]:
         """Retourne les entités Card du joueur (avec value/suit/poker_card)."""
         return self.me

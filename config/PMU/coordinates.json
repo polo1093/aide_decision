@@ -174,8 +174,8 @@
     "player_state_me": {
       "group": "player_state",
       "top_left": [
-        2067,
-        562
+        1134,
+        767
       ],
       "value": null,
       "label": "player_state_me"
@@ -219,8 +219,8 @@
     "player_state_J5": {
       "group": "player_state",
       "top_left": [
-        1133,
-        779
+        1479,
+        726
       ],
       "value": null,
       "label": "player_state_J5"
