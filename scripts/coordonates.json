@@ -1,0 +1,36 @@
+{
+  "comment": "Zones exportées : le script capture l'écran en cours, affiche les rectangles et sauvegarde ici.",
+  "templates": {
+    "Player": {"size": [140, 90], "type": "fixed"},
+    "Currency": {"size": [120, 70], "type": "fixed"},
+    "OCR": {"size": [200, 80], "type": "ocr"},
+    "Example": {"size": [160, 100], "type": "mix"}
+  },
+  "regions": {
+    "currency_1": {
+      "top_left": [80, 120],
+      "group": "Currency",
+      "label": "Currency 1"
+    },
+    "currency_2": {
+      "top_left": [80, 220],
+      "group": "Currency",
+      "label": "Currency 2"
+    },
+    "value_currency_1_ocr": {
+      "top_left": [320, 120],
+      "group": "OCR",
+      "label": "Value currency 1 OCR"
+    },
+    "zone_ocr": {
+      "top_left": [320, 220],
+      "group": "OCR",
+      "label": "Zone OCR"
+    },
+    "example_rectangle": {
+      "top_left": [560, 160],
+      "group": "Example",
+      "label": "Example rectangle"
+    }
+  }
+}
