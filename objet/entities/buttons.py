@@ -1,4 +1,5 @@
 """Entités décrivant les boutons d'action disponibles sur la table."""
+from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterator, Optional
 
@@ -21,6 +22,7 @@ class Buttons:
     """Collection utilitaire regroupant l'ensemble des boutons connus."""
     coord_path: Path | str = DEFAULT_COORD_PATH
     button : list[Button] = field(default_factory=list)
+    
 
     def __post_init__(self) -> None:
         regions, templates_resolved, _ = load_coordinates(self.coord_path)
@@ -49,7 +51,7 @@ class Buttons:
             if b.value != 0:
                 if b.value < min:
                     min = b.value      
-        return min if min==1000  else 0
+        return 0 if min == 1000 else min
     
     def reset_all(self) -> None:
         """Réinitialise l'ensemble des boutons."""
