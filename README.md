@@ -65,10 +65,6 @@ Tester l'OCR.
 Ajouter une fonction pour détecter un truc bizarre qui est affiché à l'écran. 
 Pour ajouter une fonction pour détecter si c'est à nous de jouer ou pas. 
 
-2.
-
-
-
 
 
 
@@ -78,81 +74,6 @@ Pour ajouter une fonction pour détecter si c'est à nous de jouer ou pas.
 2. Installer Python 3.9 ou version supérieure.
 3. Installer les dépendances :
 
-```bash
-pip install -r requirements.txt
-```
-
-Assurez‑vous que Tesseract est installé sur votre système pour que l'OCR fonctionne correctement.
-Si l'exécutable n'est pas détecté automatiquement, définissez la variable
-d'environnement `TESSERACT_CMD` avec le chemin complet vers `tesseract` :
-
-```bash
-export TESSERACT_CMD=/usr/bin/tesseract
-```
-
-## Quickstart
-```bash
-git clone https://github.com/polo1093/aide_decission.git
-cd aide_decission
-python -m venv .venv && . .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-# Installez Tesseract puis définissez TESSERACT_CMD si nécessaire
-# Windows: setx TESSERACT_CMD "C:\Program Files\Tesseract-OCR\tesseract.exe"
-python launch.py --profile demo                 # Exemple d’exécution
-## Modifier les coordonnées
-
-Toutes les positions à l'écran sont définies dans le fichier `coordinates.json` à la racine du projet. Chaque région expose désormais directement la position absolue de son coin haut-gauche via `top_left` (en pixels écran) et s'appuie sur un gabarit (`templates`) pour déterminer sa taille. Mettez à jour ces coordonnées pour adapter le bot à une nouvelle résolution ou interface, puis relancez le programme pour appliquer les changements.
-
-## Calibration absolue et point de référence
-
-Toutes les captures sont désormais traitées en coordonnées **absolues**. Les
-scripts recherchent automatiquement le point de référence défini par
-`anchor.png` (ou `anchor.jpg`) afin de compenser un éventuel décalage de la
-table sur l'écran. L'ancien bloc `table_capture` a été retiré des fichiers
-`coordinates.json` : toutes les zones sont donc exprimées directement en
-coordonnées écran, l'origine restant `(0, 0)`. Lorsque le point d'ancrage est
-détecté, les scripts appliquent toujours la même logique de correction pour
-compenser un décalage éventuel.
-
-## Capture de nouvelles cartes
-
-1. **Extraire des captures plein écran** depuis une vidéo de calibration :
-
-    ```bash
-    python scripts/Crop_Video_Frames.py \
-        --game-dir config/PMU \
-        --video debug/cards_video/cards_video.mp4 \
-        --out config/PMU/debug/screens
-    ```
-
-    Les images sont enregistrées dans `config/<game>/debug/screens` et servent
-    de base aux étapes suivantes.
-
-2. **Identifier les cartes manquantes** avec `identify_card.py` :
-
-    ```bash
-    python scripts/identify_card.py --game PMU --screens-dir config/PMU/debug/screens
-    ```
-
-    Le script applique automatiquement la correspondance sur l'ancre pour
-    extraire chaque patch (valeur et symbole) avant de proposer une
-    labellisation assistée.
-
-3. **Valider la détection** à l'aide de `capture_cards.py` ou via
-   `quick_setup.py`, qui enchaîne édition des zones, captures vidéo, matching
-   et validation dynamique.
-
-## Copier les sources Python
-
-Le script `scripts/copy_python_sources.py` regroupe tout le code `.py`
-du projet (à l'exception de ce script) et le place dans le presse-papiers.
-Installez `pyperclip` si nécessaire, puis exécutez :
-
-```bash
-python scripts/copy_python_sources.py
-```
-
-Vous pouvez ignorer d'autres fichiers avec `--exclude chemin/vers/fichier.py`.
 
 ## Utilitaires de calibration partagés
 
