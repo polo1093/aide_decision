@@ -35,7 +35,7 @@ class ScanTable:
     - Localisation de la fenêtre via un template d'ancre (me.png) avec locate_in_image().
     - ``screen_array`` conserve la capture plein écran en BGR (convention OpenCV).
     """
-
+    #Todo fqire des objets scqn cqrds ... pour videe le fichier cards _recognition car bcp trop gros
     def __init__(self, *, value_threshold: float = 0.75, suit_threshold: float = 0.75) -> None:
         # --- Config / calibration ---
         self.coord_path = DEFAULT_COORD_PATH
@@ -138,8 +138,6 @@ class ScanTable:
             return None, None, 0.0, 0.0
 
         if is_card_present(image_card_value):
-                
-        
             carte_value, carte_suit, score_value, score_suit = recognize_number_and_suit(
                 image_card_value,
                 image_card_suit,
@@ -163,17 +161,6 @@ class ScanTable:
         return  is_cover_me_cards(state_patch, threshold=0.6)
         
        
-
-    @staticmethod
-    def _patch_has_pixels(patch: Union[np.ndarray, Image.Image]) -> bool:
-        if isinstance(patch, np.ndarray):
-            return patch.size > 0 and patch.ndim >= 2 and patch.shape[0] > 0 and patch.shape[1] > 0
-        if isinstance(patch, Image.Image):
-            width, height = patch.size
-            return width > 0 and height > 0
-        return False
-
-
 
 
     def scan_player(self, position_money,position_etat):

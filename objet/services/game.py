@@ -196,6 +196,7 @@ class Game:
         """
 
         party_state = self._detect_new_party()
+        #Todo dois je rajouter des condition
         self.etat.update(
             cards_state=self.table.cards,
             players=self.table.players,
@@ -214,6 +215,7 @@ class Game:
 
     # ---- Calculs internes --------------------------------------------
     def _detect_new_party(self) -> Optional[bool]:
+        #Todo ecrire au propore et test la logique  
         current_pot = getattr(self.table.pot, "amount", None)
         if current_pot is None:
             self._last_pot_amount = None

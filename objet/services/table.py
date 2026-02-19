@@ -87,10 +87,6 @@ class Table:
 
                 
         self.pot.amount = self.scan.scan_money(self.pot.coordinates_value)
-
-    
-
-
         return True
 
     def New_Party(self)-> None:
