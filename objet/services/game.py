@@ -25,6 +25,29 @@ from objet.services.script_state import SCRIPT_STATE_USAGE, StatePortion
 
 LOGGER = logging.getLogger(__name__)
 
+GAME_STREET_ORDER = {
+    "IDLE": 0,
+    "PREFLOP": 1,
+    "FLOP": 2,
+    "TURN": 3,
+    "RIVER": 4,
+}
+
+GAME_STREET_BY_BOARD_COUNT = {
+    0: "PREFLOP",
+    3: "FLOP",
+    4: "TURN",
+    5: "RIVER",
+}
+
+GAME_VISIBLE_CARD_COUNT = {
+    "IDLE": 0,
+    "PREFLOP": 2,
+    "FLOP": 5,
+    "TURN": 6,
+    "RIVER": 7,
+}
+
 
 
 @dataclass
@@ -155,7 +178,9 @@ class Game:
     etat: Etat = field(default_factory=Etat)
     table: Table = field(default_factory=Table)
     resultat_calcul: Dict[str, Any] = field(default_factory=dict)
+    street: str = "IDLE"
     workflow: Optional[str] = None
+    pot_drop_tolerance: float = 0.01
     _last_pot_amount: Optional[float] = field(default=None, init=False, repr=False)
     _new_party_flag: bool = field(default=False, init=False, repr=False)
     _pending_new_party_cleanup: bool = field(default=False, init=False, repr=False)
@@ -196,11 +221,13 @@ class Game:
         """
 
         party_state = self._detect_new_party()
-        #Todo dois je rajouter des condition
+        if party_state is True:
+            return True
+
         self.etat.update(
             cards_state=self.table.cards,
             players=self.table.players,
-            pot=self.table.pot.amount,
+            pot=getattr(self.table.pot, "amount", None),
         )
         return party_state
 
@@ -215,28 +242,83 @@ class Game:
 
     # ---- Calculs internes --------------------------------------------
     def _detect_new_party(self) -> Optional[bool]:
-        #Todo ecrire au propore et test la logique  
+        # Le scan peut rater une carte ou lire un pot trop bas une seule fois.
+        # Une nouvelle main est donc validee seulement si le pot baisse ET si
+        # le nombre de cartes visibles baisse aussi. Exception: en PREFLOP, une
+        # nouvelle main peut encore avoir 2 cartes visibles, donc la baisse du
+        # pot suffit si le scan indique toujours un PREFLOP coherent.
+        if self._pending_new_party_cleanup:
+            self._new_party_flag = True
+            return True
+
+        observed_street = self._observed_street()
+        observed_card_count = self._observed_card_count()
         current_pot = getattr(self.table.pot, "amount", None)
         if current_pot is None:
-            self._last_pot_amount = None
-            self._new_party_flag = False
+            self._accept_observed_street(observed_street)
             return None
 
         if self._last_pot_amount is None:
             self._last_pot_amount = current_pot
             self._new_party_flag = False
+            self._accept_observed_street(observed_street)
             return False
 
-        if current_pot < self._last_pot_amount:
-            self._new_party_flag = True
-            self._pending_new_party_cleanup = True
-            self._last_pot_amount = current_pot
-            return True
+        pot_dropped = current_pot < self._last_pot_amount - self.pot_drop_tolerance
+        if pot_dropped:
+            current_card_count = GAME_VISIBLE_CARD_COUNT.get(self.street, 0)
+            cards_reduced = observed_card_count < current_card_count
+            same_preflop = self.street == "PREFLOP" and observed_street == "PREFLOP"
+
+            if cards_reduced or same_preflop:
+                self._new_party_flag = True
+                self._pending_new_party_cleanup = True
+                self._last_pot_amount = current_pot
+                if observed_street is not None:
+                    self.street = observed_street
+                return True
+
+            self._new_party_flag = False
+            return False
 
         self._new_party_flag = False
-        self._pending_new_party_cleanup = False
         self._last_pot_amount = current_pot
+        self._accept_observed_street(observed_street)
         return False
+
+    def _observed_street(self) -> Optional[str]:
+        cards = getattr(self.table, "cards", None)
+        if cards is None:
+            return None
+
+        me_cards = cards.me_cards()
+        board_cards = cards.board_cards()
+        hero_count = sum(1 for card in me_cards if getattr(card, "formatted", None))
+        board_count = sum(1 for card in board_cards if getattr(card, "formatted", None))
+
+        if hero_count == 0 and board_count == 0:
+            return "IDLE"
+        if hero_count != 2:
+            return None
+        return GAME_STREET_BY_BOARD_COUNT.get(board_count)
+
+    def _observed_card_count(self) -> int:
+        cards = getattr(self.table, "cards", None)
+        if cards is None:
+            return 0
+
+        visible_me = sum(1 for card in cards.me_cards() if getattr(card, "formatted", None))
+        visible_board = sum(1 for card in cards.board_cards() if getattr(card, "formatted", None))
+        return visible_me + visible_board
+
+    def _accept_observed_street(self, observed_street: Optional[str]) -> None:
+        if observed_street is None:
+            return
+
+        current_rank = GAME_STREET_ORDER.get(self.street, -1)
+        observed_rank = GAME_STREET_ORDER.get(observed_street, -1)
+        if observed_rank >= current_rank:
+            self.street = observed_street
 
     def ack_new_party(self) -> None:
         if not self._pending_new_party_cleanup:
@@ -244,6 +326,7 @@ class Game:
         self.table.New_Party()
         self.etat.cards.reset()
         self.etat.players.reset()
+        self.street = "IDLE"
         self._pending_new_party_cleanup = False
         self._new_party_flag = False
 

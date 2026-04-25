@@ -26,13 +26,17 @@ class Decision:
 
     def decide(self, game: Game) -> DecisionResult:
         """Return the recommended action for the hero based on the current state."""
-        if  game.etat.cards.is_ready_for_cal():
+        if getattr(game, "new_party_detected", False):
+            return DecisionResult(action="WAIT", reason="new_party_pending_reset")
+
+        if not game.etat.cards.is_ready_for_cal():
             return DecisionResult(action="WAIT", reason="hero_cards_not_detected_yet")
-        min_value=game.table.buttons.min_value()
-        if min_value is None:
-             return DecisionResult(action="WAIT", reason="Not_boutons")
-         
-        
+
+        buttons = getattr(game.table, "buttons", None)
+        if buttons is None or not buttons.one_is_activate():
+            return DecisionResult(action="WAIT", reason="not_buttons")
+
+        min_value = buttons.min_value()
         Call_max = game.etat.Call_max
 
         if Call_max < min_value - self.FOLD_THRESHOLD:
