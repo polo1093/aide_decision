@@ -9,6 +9,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from objet.utils.logging_config import get_logger
+
+
+LOGGER = get_logger(__name__)
+
 
 class Controller:
     def __init__(self):
@@ -23,14 +28,21 @@ class Controller:
         # self.click = Cliqueur()
 
     def main(self):
-
+        self.count += 1
+        LOGGER.info("debut cycle_controller count=%s", self.count)
         if self.game.scan_to_data_table():
             new_party = self.game.update_from_scan()
             result = self.game_stat_to_string(new_party)
             if new_party:
                 self.game.ack_new_party()
+            LOGGER.info(
+                "fin cycle_controller count=%s status=ok nouvelle_partie=%s",
+                self.count,
+                bool(new_party),
+            )
             return result
         self.cpt += 1
+        LOGGER.warning("SKIP table_introuvable count=%s scan_echec=%s", self.count, self.cpt)
         return f"don t find     Scan n°{self.cpt}"
         
 

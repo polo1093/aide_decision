@@ -4,7 +4,6 @@ from typing import Dict, List, Optional, Tuple, Union
 import cv2
 import numpy as np
 from PIL import ImageGrab, Image
-import logging
 
 from pathlib import Path
 import sys
@@ -15,6 +14,7 @@ if str(PROJECT_ROOT) not in sys.path:
 import pyautogui
 from objet.utils.pyauto import locate_in_image
 from objet.utils.calibration import bbox_from_region, load_coordinates
+from objet.utils.logging_config import get_logger
 from objet.scanner.cards_recognition import (
     TemplateIndex,
     is_cover_me_cards, is_etat_player,
@@ -27,6 +27,9 @@ DEFAULT_COORD_PATH = Path("config/PMU/coordinates.json")
 DEFAULT_ANCHOR_PATH = Path("config/PMU/anchor.png")
 DEFAULT_CARDS_ROOT = Path("config/PMU/Cards")
 DEFAULT_LOSE_PATH = Path("config/PMU/lose.png")
+
+
+LOGGER = get_logger(__name__)
 
 
 class ScanTable:
@@ -67,8 +70,11 @@ class ScanTable:
     def test_scan(self) -> bool:
         self.screen_refresh()
         if self.is_lose():
+            LOGGER.error("ARRET - ecran_perdu detecte=True")
             sys.exit("You lose")
-        return self.find_table()
+        found = self.find_table()
+        LOGGER.debug("SCAN test_table status=%s", found)
+        return found
     
     def screen_refresh(self) -> None:
         """Capture plein écran dans self.screen_array (numpy BGR)."""
@@ -90,6 +96,7 @@ class ScanTable:
         if self.screen_array is None:
             self.scan_string = "no_screen"
             self.anchor_box = None
+            LOGGER.warning("SKIP recherche_table raison=no_screen")
             return False
 
         # 1) Localiser l'ancre dans le plein écran via pyautogui
@@ -104,11 +111,13 @@ class ScanTable:
         except pyautogui.ImageNotFoundException:
             self.scan_string = "don't find"
             self.anchor_box = None
+            LOGGER.warning("SKIP recherche_table raison=anchor_introuvable confidence=%s", confidence)
             return False
 
         anchor_left, anchor_top, anchor_w, anchor_h = box
         self.anchor_box = (int(anchor_left), int(anchor_top), int(anchor_w), int(anchor_h))
         self.scan_string = "ok"
+        LOGGER.debug("SCAN table anchor=%s", self.anchor_box)
         return True
 
     # ------------------------------------------------------------------

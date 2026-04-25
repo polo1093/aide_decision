@@ -1,6 +1,7 @@
 # Project-specific ignores
 /screen/erreur/
 /poker/
+/logs/
 
 # Media files that are too large for the repository
 *.avi

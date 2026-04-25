@@ -23,12 +23,16 @@ from typing import Optional
 import tkinter as tk
 from tkinter import ttk
 
-import logging
-
 from objet.services.controller import Controller   # <--- IMPORTANT : import direct
+from objet.utils.logging_config import (
+    configure_logging,
+    get_logger,
+    log_path_value,
+    session_log,
+)
 
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class App(tk.Tk):
@@ -141,9 +145,12 @@ class App(tk.Tk):
         self.scanning = True
         self.lbl_status.configure(text="Scanning…")
         self._last_tick_t = time.time()
+        logger.info("debut scan_continu interval_ms=%s", self.scan_interval_ms)
         self.after(self.scan_interval_ms, self._tick)
 
     def stop_scan(self):
+        if self.scanning:
+            logger.info("fin scan_continu last_ms=%s", _fmt_optional_float(self.last_call_ms))
         self.scanning = False
         self.lbl_status.configure(text="Stopped.")
 
@@ -151,6 +158,7 @@ class App(tk.Tk):
         """
         Un seul appel à Controller.main(), sans boucle continue.
         """
+        logger.info("debut snapshot")
         t0 = time.perf_counter()
         try:
             out = self.controller.main()
@@ -167,6 +175,7 @@ class App(tk.Tk):
 
         self.var_perf.set(f"scan: {dt_ms:.1f} ms | fps: —")
         self.lbl_status.configure(text="Snapshot done.")
+        logger.info("fin snapshot status=ok duree_ms=%.1f", dt_ms)
 
     def _tick(self):
         """
@@ -211,7 +220,7 @@ class App(tk.Tk):
         self._set_text(f"Erreur Controller.main(): {error}")
         self.var_perf.set("scan: — ms | fps: —")
         self.lbl_status.configure(text="Erreur controller.")
-        logger.exception("Erreur lors de %s", context)
+        logger.exception("ARRET - erreur controller contexte=%s error=%s", context, error)
 
 
 # ---------------------------------------------------------------------------
@@ -231,13 +240,23 @@ def parse_args(argv=None):
 
 def main(argv=None):
     args = parse_args(argv)
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    )
-    controller = Controller()
-    app = App(controller=controller, scan_interval_ms=args.interval)
-    app.mainloop()
+    configure_logging()
+    with session_log("interface") as log_file:
+        logger.info(
+            "debut interface interval_ms=%s log=%s",
+            args.interval,
+            log_path_value(log_file),
+        )
+        controller = Controller()
+        app = App(controller=controller, scan_interval_ms=args.interval)
+        app.mainloop()
+        logger.info("fin interface status=closed log=%s", log_path_value(log_file))
+
+
+def _fmt_optional_float(value: Optional[float]) -> str:
+    if value is None:
+        return "None"
+    return f"{value:.1f}"
 
 
 if __name__ == "__main__":

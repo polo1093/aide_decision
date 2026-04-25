@@ -8,15 +8,15 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from pokereval.card import Card as PokerCard
-import logging
 import sys
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from objet.utils.calibration import Region, bbox_from_region, load_coordinates
+from objet.utils.logging_config import configure_logging, get_logger
 
-LOGGER = logging.getLogger(__name__)
+LOGGER = get_logger(__name__)
 
 SUIT_ALIASES = {
     "hearts": "\u2665",
@@ -132,11 +132,7 @@ class Card:
         if string_carte[0] == "0" and len(string_carte) >= 2:
             original = string_carte
             corrected = "10" + string_carte[1:]
-            LOGGER.debug(
-                "Debug : La carte spécifiée '%s' est modifiée en '%s' pour correction.",
-                original,
-                corrected,
-            )
+            LOGGER.debug("CORRECTION carte old=%s->%s", original, corrected)
             string_carte = corrected
 
         if len(string_carte) >= 2:
@@ -146,10 +142,10 @@ class Card:
             suit = suit_dict.get(suit_part)
             if value is not None and suit is not None:
                 return PokerCard(value, suit)
-            LOGGER.debug("Debug : La carte spécifiée '%s' n'est pas reconnue.", string_carte)
+            LOGGER.debug("SKIP carte_non_reconnue value=%s", string_carte)
             return None
 
-        LOGGER.debug("Debug : La carte spécifiée '%s' est trop courte.", string_carte)
+        LOGGER.debug("SKIP carte_trop_courte value=%s", string_carte)
         return None
 
 
@@ -251,7 +247,7 @@ __all__ = ["Card", "CardsState"]
 if __name__ == "__main__":
     import sys
 
-    logging.basicConfig(level=logging.DEBUG, format="[%(levelname)s] %(message)s")
+    configure_logging()
 
     print("=== Tests manuels de Card ===")
 

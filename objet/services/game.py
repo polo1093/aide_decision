@@ -1,7 +1,6 @@
 """Gestion centralisée de l'état du jeu."""
 
 from dataclasses import dataclass, field
-import logging
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
@@ -18,12 +17,13 @@ from objet.entities.buttons import Buttons
 from objet.services.table import Table
 from objet.scanner.cards_recognition import CardObservation
 from objet.utils.capture import CaptureState
+from objet.utils.logging_config import get_logger
 
 from pokereval.hand_evaluator import HandEvaluator
 
 from objet.services.script_state import SCRIPT_STATE_USAGE, StatePortion
 
-LOGGER = logging.getLogger(__name__)
+LOGGER = get_logger(__name__)
 
 GAME_STREET_ORDER = {
     "IDLE": 0,
@@ -94,6 +94,14 @@ class Etat:
         self.chance_win_0 = chance_win_0
         
         self.chance_win = chance_win_0**(self.players.nbr_player_start -1 )
+        LOGGER.debug(
+            "CALCUL chance_win hero=%s board=%s joueurs=%s chance_1=%s chance_table=%s",
+            [card.formatted for card in me_cards],
+            [card.formatted for card in board_cards],
+            self.players.nbr_player_start,
+            self.chance_win_0,
+            self.chance_win,
+        )
         
         return chance_win_0
 
@@ -118,6 +126,16 @@ class Etat:
             self.ev = self._cal_EV()
             self._cal_max_call()
             self._calcul_montant_a_jouer()
+            LOGGER.info(
+                "CALCUL etat pot=%s chance=%s ev=%s call_max=%s montant=%s",
+                self.pot,
+                self.chance_win_0,
+                self.ev,
+                self.Call_max,
+                self.montant_a_jouer,
+            )
+        else:
+            LOGGER.debug("SKIP calcul raison=cartes_hero_incompletes")
     
     
     def _calcul_montant_a_jouer(self) -> float:
@@ -205,10 +223,11 @@ class Game:
 
    
     def scan_to_data_table(self) -> bool:
-       
+        LOGGER.info("debut workflow_scan street=%s", self.street)
         if not self.table.launch_scan():
+            LOGGER.warning("fin workflow_scan status=skip raison=table_introuvable")
             return False
-       
+        LOGGER.info("fin workflow_scan status=ok street=%s", self.street)
        
         return True
     
@@ -220,8 +239,15 @@ class Game:
             Optional[bool]: True si une nouvelle partie a été détectée, False sinon, None si le pot n'a pas été lu.
         """
 
+        LOGGER.info(
+            "debut update_game street=%s pot=%s",
+            self.street,
+            getattr(self.table.pot, "amount", None),
+        )
+
         party_state = self._detect_new_party()
         if party_state is True:
+            LOGGER.info("fin update_game status=nouvelle_partie")
             return True
 
         self.etat.update(
@@ -229,6 +255,7 @@ class Game:
             players=self.table.players,
             pot=getattr(self.table.pot, "amount", None),
         )
+        LOGGER.info("fin update_game status=ok nouvelle_partie=%s", party_state)
         return party_state
 
 
@@ -249,6 +276,7 @@ class Game:
         # pot suffit si le scan indique toujours un PREFLOP coherent.
         if self._pending_new_party_cleanup:
             self._new_party_flag = True
+            LOGGER.debug("NOUVELLE_PARTIE pending_cleanup=True")
             return True
 
         observed_street = self._observed_street()
@@ -256,12 +284,14 @@ class Game:
         current_pot = getattr(self.table.pot, "amount", None)
         if current_pot is None:
             self._accept_observed_street(observed_street)
+            LOGGER.warning("SKIP pot_absent street=%s observed=%s", self.street, observed_street)
             return None
 
         if self._last_pot_amount is None:
             self._last_pot_amount = current_pot
             self._new_party_flag = False
             self._accept_observed_street(observed_street)
+            LOGGER.debug("INIT pot amount=%s street=%s", current_pot, self.street)
             return False
 
         pot_dropped = current_pot < self._last_pot_amount - self.pot_drop_tolerance
@@ -271,14 +301,33 @@ class Game:
             same_preflop = self.street == "PREFLOP" and observed_street == "PREFLOP"
 
             if cards_reduced or same_preflop:
+                previous_pot = self._last_pot_amount
                 self._new_party_flag = True
                 self._pending_new_party_cleanup = True
                 self._last_pot_amount = current_pot
                 if observed_street is not None:
                     self.street = observed_street
+                LOGGER.info(
+                    "NOUVELLE_PARTIE pot=%s->%s cards=%s->%s street=%s observed=%s",
+                    previous_pot,
+                    current_pot,
+                    current_card_count,
+                    observed_card_count,
+                    self.street,
+                    observed_street,
+                )
                 return True
 
             self._new_party_flag = False
+            LOGGER.warning(
+                "SKIP baisse_pot_non_confirmee pot=%s->%s cards=%s->%s street=%s observed=%s",
+                self._last_pot_amount,
+                current_pot,
+                current_card_count,
+                observed_card_count,
+                self.street,
+                observed_street,
+            )
             return False
 
         self._new_party_flag = False
@@ -322,13 +371,16 @@ class Game:
 
     def ack_new_party(self) -> None:
         if not self._pending_new_party_cleanup:
+            LOGGER.debug("SKIP ack_new_party raison=aucun_reset_en_attente")
             return
+        LOGGER.info("debut reset_partie street=%s pot=%s", self.street, self._last_pot_amount)
         self.table.New_Party()
         self.etat.cards.reset()
         self.etat.players.reset()
         self.street = "IDLE"
         self._pending_new_party_cleanup = False
         self._new_party_flag = False
+        LOGGER.info("fin reset_partie status=ok street=%s", self.street)
 
     @property
     def new_party_detected(self) -> bool:
