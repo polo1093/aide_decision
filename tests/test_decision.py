@@ -77,6 +77,7 @@ class DummyGame:
             players=self.table.players,
             chance_win=None,
             chance_win_0=None,
+            equity_required=None,
             pot=pot_amount,
             montant_a_jouer=None,
             Call_max=0.0,
@@ -126,34 +127,62 @@ def test_wait_when_no_button_is_active() -> None:
     assert result.reason == "not_buttons"
 
 
-def test_check_when_call_max_is_below_min_button_value() -> None:
+def test_fold_when_call_is_not_profitable() -> None:
     game = DummyGame(_cards_state("AS", "KS"), buttons=DummyButtons(min_value=2.0))
     game.etat.Call_max = 1.0
+    game.etat.chance_win = 0.20
+    game.etat.equity_required = 0.35
     decision = Decision()
 
     result = decision.decide(game)
 
-    assert result.action == "CHECK"
-    assert result.reason == "chance_win_below_fold_threshold"
+    assert result.action == "FOLD"
+    assert result.reason == "negative_call_ev"
 
 
-def test_raise_when_call_max_is_high() -> None:
+def test_raise_when_edge_is_large() -> None:
     game = DummyGame(_cards_state("AS", "KS"), buttons=DummyButtons(min_value=2.0))
-    game.etat.Call_max = 3.0
+    game.etat.Call_max = 10.0
+    game.etat.chance_win = 0.50
+    game.etat.equity_required = 0.35
     decision = Decision()
 
     result = decision.decide(game)
 
     assert result.action == "RAISE"
-    assert result.reason == "chance_win_between_thresholds"
+    assert result.reason == "positive_edge_raise"
 
 
-def test_call_when_call_max_is_close_to_min_button_value() -> None:
+def test_call_when_edge_is_close() -> None:
     game = DummyGame(_cards_state("AS", "KS"), buttons=DummyButtons(min_value=2.0))
-    game.etat.Call_max = 2.02
+    game.etat.Call_max = 3.0
+    game.etat.chance_win = 0.38
+    game.etat.equity_required = 0.35
     decision = Decision()
 
     result = decision.decide(game)
 
     assert result.action == "CALL"
-    assert result.reason == "chance_win_above_aggressive_threshold"
+    assert result.reason == "call_profitable_or_close"
+
+
+def test_check_when_action_is_free_and_equity_is_not_strong() -> None:
+    game = DummyGame(_cards_state("AS", "KS"), buttons=DummyButtons(min_value=0.0))
+    game.etat.chance_win = 0.40
+    decision = Decision()
+
+    result = decision.decide(game)
+
+    assert result.action == "CHECK"
+    assert result.reason == "free_option_no_call_needed"
+
+
+def test_raise_when_action_is_free_and_equity_is_strong() -> None:
+    game = DummyGame(_cards_state("AS", "KS"), buttons=DummyButtons(min_value=0.0))
+    game.etat.chance_win = 0.70
+    decision = Decision()
+
+    result = decision.decide(game)
+
+    assert result.action == "RAISE"
+    assert result.reason == "free_option_strong_equity"

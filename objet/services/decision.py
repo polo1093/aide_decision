@@ -2,9 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Optional, Sequence
+from typing import Literal, Optional
 
-from objet.entities.card import Card, CardsState
 from objet.services.game import Game
 from objet.utils.logging_config import get_logger
 
@@ -24,7 +23,10 @@ class DecisionResult:
 class Decision:
     """Simple, fail-fast decision engine for the hero."""
 
-    FOLD_THRESHOLD: float = 0.01
+    # Monte Carlo has variance, so a tiny positive edge is not enough to raise.
+    FOLD_EDGE: float = -0.03
+    RAISE_EDGE: float = 0.08
+    FREE_RAISE_EQUITY: float = 0.65
 
     def decide(self, game: Game) -> DecisionResult:
         """Return the recommended action for the hero based on the current state."""
@@ -38,29 +40,39 @@ class Decision:
         if buttons is None or not buttons.one_is_activate():
             return _log_decision(DecisionResult(action="WAIT", reason="not_buttons"))
 
-        min_value = buttons.min_value()
-        Call_max = game.etat.Call_max
-        LOGGER.debug("DECISION contexte call_max=%s min_value=%s", Call_max, min_value)
+        to_call = buttons.min_value()
+        equity = getattr(game.etat, "chance_win", None)
+        equity_required = getattr(game.etat, "equity_required", None)
+        call_max = getattr(game.etat, "Call_max", 0.0)
+        if equity is None:
+            return _log_decision(DecisionResult(action="WAIT", reason="equity_not_ready"))
 
-        if Call_max < min_value - self.FOLD_THRESHOLD:
-            return _log_decision(DecisionResult(action="CHECK", reason="chance_win_below_fold_threshold"))
+        # No money to add: never CALL. Check weak/medium hands, raise strong ones.
+        if to_call <= 0:
+            if equity >= self.FREE_RAISE_EQUITY:
+                return _log_decision(DecisionResult(action="RAISE", reason="free_option_strong_equity"))
+            return _log_decision(DecisionResult(action="CHECK", reason="free_option_no_call_needed"))
 
-        if Call_max > min_value + self.FOLD_THRESHOLD * 5 :
-            return _log_decision(DecisionResult(action="RAISE", reason="chance_win_between_thresholds"))
-        
-    
-        return _log_decision(
-            DecisionResult(
-                action="CALL",
-                reason="chance_win_above_aggressive_threshold",
-                # raise_amount=raise_amount,
-            )
+        if equity_required is None:
+            return _log_decision(DecisionResult(action="WAIT", reason="equity_required_not_ready"))
+
+        edge = equity - equity_required
+        LOGGER.debug(
+            "DECISION contexte equity=%s equity_required=%s edge=%s call_max=%s to_call=%s",
+            equity,
+            equity_required,
+            edge,
+            call_max,
+            to_call,
         )
 
- 
+        if call_max < to_call or edge < self.FOLD_EDGE:
+            return _log_decision(DecisionResult(action="FOLD", reason="negative_call_ev"))
 
-
-
+        if edge >= self.RAISE_EDGE:
+            return _log_decision(DecisionResult(action="RAISE", reason="positive_edge_raise"))
+        
+        return _log_decision(DecisionResult(action="CALL", reason="call_profitable_or_close"))
 
 
 def _log_decision(result: DecisionResult) -> DecisionResult:

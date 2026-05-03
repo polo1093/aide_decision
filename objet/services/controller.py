@@ -66,7 +66,10 @@ class Controller:
         # Arrondi des valeurs numériques
         pot = round_sig(self.game.etat.pot)
 
+        chance_win = round_sig(self.game.etat.chance_win)
         chance_win_0 = round_sig(self.game.etat.chance_win_0)
+        equity_required = round_sig(self.game.etat.equity_required)
+        to_call = round_sig(self.game.etat.to_call)
         Call_max = round_sig(self.game.etat.Call_max)
         ev =  round_sig(self.game.etat.ev)
         decision_result = self.decision.decide(self.game)
@@ -122,7 +125,10 @@ class Controller:
         
         metrics_lines = [
             f"Pot: {pot}",
-            f"Chance win (1): {chance_win_0}",
+            f"To call: {to_call}",
+            f"Equity table: {chance_win}",
+            f"Equity 1v1: {chance_win_0}",
+            f"Equity min call: {equity_required}",
             f"Ev: {ev}",
             f"Call_max: {Call_max}",
         ]

@@ -2,7 +2,8 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional
+import random
+from typing import Any, Dict, Mapping, Optional, Sequence
 
 import sys
 
@@ -20,10 +21,13 @@ from objet.utils.capture import CaptureState
 from objet.utils.logging_config import get_logger
 
 from pokereval.hand_evaluator import HandEvaluator
+from pokereval.card import Card as PokerEvalCard
 
 from objet.services.script_state import SCRIPT_STATE_USAGE, StatePortion
 
 LOGGER = get_logger(__name__)
+DEFAULT_MONTE_CARLO_SIMULATIONS = 2000
+DEFAULT_TO_CALL = 0.02
 
 GAME_STREET_ORDER = {
     "IDLE": 0,
@@ -56,7 +60,11 @@ class Etat:
     cards: CardsState = field(default_factory=CardsState)
     players: Players = field(default_factory=Players)
     chance_win_0: Optional[float] = None
+    chance_win: Optional[float] = None
     pot: Optional[float] = None
+    to_call: float = DEFAULT_TO_CALL
+    equity_required: Optional[float] = None
+    monte_carlo_simulations: int = DEFAULT_MONTE_CARLO_SIMULATIONS
     montant_a_jouer: float = None
     cards_change : int = 0
     ev : float = 0
@@ -90,59 +98,72 @@ class Etat:
             card.poker_card
             for idx, card in enumerate(board_cards)
         ]
-        chance_win_0 = HandEvaluator.evaluate_hand(hero_cards, board_poker_cards)
-        self.chance_win_0 = chance_win_0
-        
-        self.chance_win = chance_win_0**(self.players.nbr_player_start -1 )
+        self.chance_win_0 = HandEvaluator.evaluate_hand(hero_cards, board_poker_cards)
+        opponent_count = max(0, self.players.nbr_player_active)
+        self.chance_win = _monte_carlo_equity(
+            hero_cards=hero_cards,
+            board_cards=board_poker_cards,
+            opponent_count=opponent_count,
+            simulations=self.monte_carlo_simulations,
+        )
         LOGGER.debug(
-            "CALCUL chance_win hero=%s board=%s joueurs=%s chance_1=%s chance_table=%s",
+            "CALCUL chance_win hero=%s board=%s adversaires=%s chance_1v1=%s equity_table=%s simulations=%s",
             [card.formatted for card in me_cards],
             [card.formatted for card in board_cards],
-            self.players.nbr_player_start,
+            opponent_count,
             self.chance_win_0,
             self.chance_win,
+            self.monte_carlo_simulations,
         )
         
-        return chance_win_0
+        return self.chance_win
 
 
-    def _cal_EV(self,to_call = 0.02)-> float:
+    def _cal_EV(self, to_call: Optional[float] = None)-> float:
         P = self.chance_win
-        Pot = self.pot                # pot avant ton call
-        C = to_call                   # montant à payer maintenant
+        Pot = self.pot
+        C = self.to_call if to_call is None else to_call
         return P * (Pot + C) - C
         
 
     def _cal_max_call(self) -> None:
         P = self.chance_win
         Pot = self.pot
-        self.Call_max = (P * Pot) / (1.0 - P)
+        if P >= 1:
+            self.Call_max = float("inf")
+        else:
+            self.Call_max = (P * Pot) / (1.0 - P)
         # >0: call OK, <0: fold
+
+    def _cal_equity_required(self) -> None:
+        pot_final = self.pot + self.to_call
+        self.equity_required = self.to_call / pot_final if pot_final > 0 else None
 
     
     def _cal(self):
-        if self.cards.is_ready_for_cal():
+        if self.cards.is_ready_for_cal() and self.pot is not None:
             self._cal_win_chances()
             self.ev = self._cal_EV()
             self._cal_max_call()
+            self._cal_equity_required()
             self._calcul_montant_a_jouer()
             LOGGER.info(
-                "CALCUL etat pot=%s chance=%s ev=%s call_max=%s montant=%s",
+                "CALCUL etat pot=%s to_call=%s equity_table=%s chance_1v1=%s ev=%s call_max=%s equity_min=%s montant=%s",
                 self.pot,
+                self.to_call,
+                self.chance_win,
                 self.chance_win_0,
                 self.ev,
                 self.Call_max,
+                self.equity_required,
                 self.montant_a_jouer,
             )
         else:
-            LOGGER.debug("SKIP calcul raison=cartes_hero_incompletes")
+            LOGGER.debug("SKIP calcul raison=cartes_hero_incompletes_ou_pot_absent")
     
     
     def _calcul_montant_a_jouer(self) -> float:
-
-        denominateur = 1 - (self.chance_win_0 * (self.players.nbr_player_start + 1))
-
-        self.montant_a_jouer = (self.chance_win_0* self.pot) / denominateur
+        self.montant_a_jouer = self.Call_max
         return self.montant_a_jouer
     
     
@@ -190,10 +211,11 @@ class Etat:
                         self.cards_change = 0
         self.cards_change -=1
 
-    def update(self, *, cards_state: CardsState, players: Players, pot: Optional[float]) -> None:
+    def update(self, *, cards_state: CardsState, players: Players, pot: Optional[float], to_call: Optional[float] = None) -> None:
         self.update_cards_state(cards_state)
         self.update_players(players)
         self.pot = pot if pot else self.pot
+        self.to_call = DEFAULT_TO_CALL if to_call is None else max(0.0, to_call)
         self._cal()
 
 
@@ -263,6 +285,7 @@ class Game:
             cards_state=self.table.cards,
             players=self.table.players,
             pot=getattr(self.table.pot, "amount", None),
+            to_call=self._current_to_call(),
         )
         LOGGER.info(
             "ETAT stable hand=%s street=%s hero=%s board=%s pot=%s raw_hero=%s raw_board=%s joueurs=%s/%s",
@@ -417,6 +440,12 @@ class Game:
         if observed_rank >= current_rank:
             self.street = observed_street
 
+    def _current_to_call(self) -> float:
+        buttons = getattr(self.table, "buttons", None)
+        if buttons is None or not buttons.one_is_activate():
+            return DEFAULT_TO_CALL
+        return buttons.min_value()
+
     def ack_new_party(self) -> None:
         if not self._pending_new_party_cleanup:
             LOGGER.debug("SKIP ack_new_party raison=aucun_reset_en_attente")
@@ -492,6 +521,72 @@ class Game:
             game.table.captures = CaptureState()
         return game
    
+
+def _monte_carlo_equity(
+    *,
+    hero_cards: Sequence[PokerEvalCard],
+    board_cards: Sequence[PokerEvalCard],
+    opponent_count: int,
+    simulations: int,
+) -> float:
+    """Estimate hero equity versus active opponents by deterministic Monte Carlo."""
+
+    if opponent_count <= 0:
+        return 1.0
+
+    missing_board_cards = 5 - len(board_cards)
+    if missing_board_cards < 0:
+        raise ValueError("Le board ne peut pas depasser 5 cartes.")
+
+    known_cards = list(hero_cards) + list(board_cards)
+    known_keys = {(card.rank, card.suit) for card in known_cards}
+    deck = [
+        PokerEvalCard(rank, suit)
+        for rank in range(2, 15)
+        for suit in range(1, 5)
+        if (rank, suit) not in known_keys
+    ]
+
+    draw_count = opponent_count * 2 + missing_board_cards
+    if draw_count > len(deck):
+        raise ValueError("Pas assez de cartes restantes pour simuler la main.")
+
+    rng = random.Random(_equity_seed(hero_cards, board_cards, opponent_count, simulations))
+    runs = max(1, simulations)
+    equity_total = 0.0
+
+    for _ in range(runs):
+        sample = rng.sample(deck, draw_count)
+        opponent_cards = sample[: opponent_count * 2]
+        completed_board = list(board_cards) + sample[opponent_count * 2 :]
+
+        hero_rank = HandEvaluator.Seven.evaluate_rank(list(hero_cards) + completed_board)
+        opponent_ranks = [
+            HandEvaluator.Seven.evaluate_rank(
+                opponent_cards[index * 2 : index * 2 + 2] + completed_board
+            )
+            for index in range(opponent_count)
+        ]
+        best_rank = min([hero_rank] + opponent_ranks)
+        if hero_rank != best_rank:
+            continue
+
+        tied_opponents = sum(1 for rank in opponent_ranks if rank == best_rank)
+        equity_total += 1.0 / (tied_opponents + 1)
+
+    return equity_total / runs
+
+
+def _equity_seed(
+    hero_cards: Sequence[PokerEvalCard],
+    board_cards: Sequence[PokerEvalCard],
+    opponent_count: int,
+    simulations: int,
+) -> str:
+    cards = list(hero_cards) + list(board_cards)
+    encoded_cards = "-".join(f"{card.rank}:{card.suit}" for card in cards)
+    return f"{encoded_cards}|opp={opponent_count}|sim={simulations}"
+
 
 __all__ = [
     "Game",

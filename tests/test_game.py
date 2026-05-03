@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from objet.entities.card import Card, CardsState
-from objet.services.game import Game
+from objet.services.game import Game, _monte_carlo_equity
 
 
 class SpyEtat:
@@ -215,3 +215,44 @@ def test_partial_flop_scan_does_not_update_stable_board_or_crash() -> None:
         None,
     ]
     assert game.etat.chance_win_0 is not None
+
+
+def test_monte_carlo_equity_uses_multiple_opponents() -> None:
+    hero = [Card(), Card()]
+    hero[0].apply_observation("A", "hearts")
+    hero[1].apply_observation("K", "diamonds")
+
+    equity_one = _monte_carlo_equity(
+        hero_cards=[card.poker_card for card in hero],
+        board_cards=[],
+        opponent_count=1,
+        simulations=500,
+    )
+    equity_many = _monte_carlo_equity(
+        hero_cards=[card.poker_card for card in hero],
+        board_cards=[],
+        opponent_count=4,
+        simulations=500,
+    )
+
+    assert 0 <= equity_many <= equity_one <= 1
+
+
+def test_update_uses_to_call_for_ev_and_required_equity() -> None:
+    game = Game()
+    game.etat.monte_carlo_simulations = 200
+
+    scanned = CardsState()
+    scanned.me[0].apply_observation("A", "hearts")
+    scanned.me[1].apply_observation("K", "diamonds")
+
+    game.etat.update(
+        cards_state=scanned,
+        players=game.table.players,
+        pot=0.10,
+        to_call=0.05,
+    )
+
+    assert game.etat.to_call == 0.05
+    assert abs(game.etat.equity_required - (0.05 / 0.15)) < 1e-12
+    assert game.etat.chance_win is not None
