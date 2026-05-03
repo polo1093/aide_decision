@@ -158,16 +158,24 @@ class Etat:
     def update_cards_state(self, cards_state: CardsState) -> None:
         """Met à jour l'état des cartes."""
         nbr_scan = 3 *2
-        for i,card in enumerate(cards_state.board):
-            if self.cards.board[i].formatted is None:
-                self.cards.board[i] = card
-            if card.formatted is None :
-                continue   
-            if card.formatted != self.cards.board[i].formatted:
-                self.cards_change +=2
-                if self.cards_change >= nbr_scan:
-                        self.cards.board[i] = card
-                        self.cards_change = 0
+        board_count = sum(1 for card in cards_state.board if card.formatted)
+        if board_count in (0, 3, 4, 5):
+            for i,card in enumerate(cards_state.board):
+                if self.cards.board[i].formatted is None:
+                    self.cards.board[i] = card
+                if card.formatted is None :
+                    continue
+                if card.formatted != self.cards.board[i].formatted:
+                    self.cards_change +=2
+                    if self.cards_change >= nbr_scan:
+                            self.cards.board[i] = card
+                            self.cards_change = 0
+        else:
+            LOGGER.debug(
+                "SKIP update board raison=nombre_cartes_incoherent count=%s board=%s",
+                board_count,
+                [card.formatted for card in cards_state.board],
+            )
         
             
         for i,card in enumerate(cards_state.me):
@@ -199,6 +207,7 @@ class Game:
     street: str = "IDLE"
     workflow: Optional[str] = None
     pot_drop_tolerance: float = 0.01
+    _hand_id: int = field(default=1, init=False, repr=False)
     _last_pot_amount: Optional[float] = field(default=None, init=False, repr=False)
     _new_party_flag: bool = field(default=False, init=False, repr=False)
     _pending_new_party_cleanup: bool = field(default=False, init=False, repr=False)
@@ -255,7 +264,19 @@ class Game:
             players=self.table.players,
             pot=getattr(self.table.pot, "amount", None),
         )
-        LOGGER.info("fin update_game status=ok nouvelle_partie=%s", party_state)
+        LOGGER.info(
+            "ETAT stable hand=%s street=%s hero=%s board=%s pot=%s raw_hero=%s raw_board=%s joueurs=%s/%s",
+            self._hand_id,
+            self.street,
+            [card.formatted for card in self.etat.cards.me_cards()],
+            [card.formatted for card in self.etat.cards.board_cards()],
+            self.etat.pot,
+            sum(1 for card in self.table.cards.me_cards() if getattr(card, "formatted", None)),
+            sum(1 for card in self.table.cards.board_cards() if getattr(card, "formatted", None)),
+            self.etat.players.nbr_player_active,
+            self.etat.players.nbr_player_start,
+        )
+        LOGGER.info("fin update_game status=ok nouvelle_partie=%s hand=%s", party_state, self._hand_id)
         return party_state
 
 
@@ -276,7 +297,7 @@ class Game:
         # pot suffit si le scan indique toujours un PREFLOP coherent.
         if self._pending_new_party_cleanup:
             self._new_party_flag = True
-            LOGGER.debug("NOUVELLE_PARTIE pending_cleanup=True")
+            LOGGER.debug("NOUVELLE_PARTIE pending_cleanup=True hand=%s", self._hand_id)
             return True
 
         observed_street = self._observed_street()
@@ -291,24 +312,51 @@ class Game:
             self._last_pot_amount = current_pot
             self._new_party_flag = False
             self._accept_observed_street(observed_street)
-            LOGGER.debug("INIT pot amount=%s street=%s", current_pot, self.street)
+            LOGGER.debug("INIT pot amount=%s street=%s hand=%s", current_pot, self.street, self._hand_id)
+            return False
+
+        if self.street == "IDLE" and observed_street == "PREFLOP":
+            self._last_pot_amount = current_pot
+            self._new_party_flag = False
+            self.street = observed_street
+            LOGGER.info(
+                "INIT main_depuis_idle hand=%s pot=%s cards=%s observed=%s",
+                self._hand_id,
+                current_pot,
+                observed_card_count,
+                observed_street,
+            )
             return False
 
         pot_dropped = current_pot < self._last_pot_amount - self.pot_drop_tolerance
         if pot_dropped:
+            if observed_street in (None, "IDLE"):
+                self._new_party_flag = False
+                LOGGER.warning(
+                    "SKIP baisse_pot_scan_incoherent pot=%s->%s cards=%s street=%s observed=%s",
+                    self._last_pot_amount,
+                    current_pot,
+                    observed_card_count,
+                    self.street,
+                    observed_street,
+                )
+                return False
+
             current_card_count = GAME_VISIBLE_CARD_COUNT.get(self.street, 0)
             cards_reduced = observed_card_count < current_card_count
             same_preflop = self.street == "PREFLOP" and observed_street == "PREFLOP"
 
             if cards_reduced or same_preflop:
                 previous_pot = self._last_pot_amount
+                self._hand_id += 1
                 self._new_party_flag = True
                 self._pending_new_party_cleanup = True
                 self._last_pot_amount = current_pot
                 if observed_street is not None:
                     self.street = observed_street
                 LOGGER.info(
-                    "NOUVELLE_PARTIE pot=%s->%s cards=%s->%s street=%s observed=%s",
+                    "NOUVELLE_PARTIE hand=%s pot=%s->%s cards=%s->%s street=%s observed=%s",
+                    self._hand_id,
                     previous_pot,
                     current_pot,
                     current_card_count,
@@ -373,18 +421,22 @@ class Game:
         if not self._pending_new_party_cleanup:
             LOGGER.debug("SKIP ack_new_party raison=aucun_reset_en_attente")
             return
-        LOGGER.info("debut reset_partie street=%s pot=%s", self.street, self._last_pot_amount)
+        LOGGER.info("debut reset_partie hand=%s street=%s pot=%s", self._hand_id, self.street, self._last_pot_amount)
         self.table.New_Party()
         self.etat.cards.reset()
         self.etat.players.reset()
         self.street = "IDLE"
         self._pending_new_party_cleanup = False
         self._new_party_flag = False
-        LOGGER.info("fin reset_partie status=ok street=%s", self.street)
+        LOGGER.info("fin reset_partie status=ok hand=%s street=%s", self._hand_id, self.street)
 
     @property
     def new_party_detected(self) -> bool:
         return self._new_party_flag
+
+    @property
+    def hand_id(self) -> int:
+        return self._hand_id
 
     
 

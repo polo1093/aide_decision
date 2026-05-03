@@ -140,6 +140,7 @@ class Controller:
         return (
         #     f"Nombre de joueurs: {nbr_player}   Pot: {pot} €   Fond: {fond} €\n"
             
+            f"Partie: {self.game.hand_id}\n"
             f"Mes cartes: {me_cards_str}\n"
             f"Cartes sur le board: {board_cards_str}\n"
             f"{player_scan}\n"

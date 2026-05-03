@@ -30,6 +30,7 @@ from objet.utils.logging_config import (
     log_path_value,
     session_log,
 )
+from objet.utils.debug_capture import capture_blocking_error_screen
 
 
 logger = get_logger(__name__)
@@ -215,12 +216,18 @@ class App(tk.Tk):
 
     def _handle_controller_exception(self, context: str, error: Exception):
         """Affiche l'erreur côté UI et loggue le détail pour la console."""
+        screenshot_path = capture_blocking_error_screen(context=context)
         self.last_call_ms = None
         self.fps = None
         self._set_text(f"Erreur Controller.main(): {error}")
         self.var_perf.set("scan: — ms | fps: —")
         self.lbl_status.configure(text="Erreur controller.")
-        logger.exception("ARRET - erreur controller contexte=%s error=%s", context, error)
+        logger.exception(
+            "ARRET - erreur controller contexte=%s error=%s screenshot=%s",
+            context,
+            error,
+            log_path_value(screenshot_path) if screenshot_path else None,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -235,6 +242,11 @@ def parse_args(argv=None):
         default=1000,
         help="Intervalle entre deux appels à main() en ms (25..2000)",
     )
+    ap.add_argument(
+        "--snapshot",
+        action="store_true",
+        help="Exécute un seul Controller.main() dans le terminal, sans ouvrir l'interface.",
+    )
     return ap.parse_args(argv)
 
 
@@ -248,6 +260,20 @@ def main(argv=None):
             log_path_value(log_file),
         )
         controller = Controller()
+        if args.snapshot:
+            try:
+                print(controller.main())
+            except Exception as exc:
+                screenshot_path = capture_blocking_error_screen(context="Snapshot CLI")
+                logger.exception(
+                    "ARRET - erreur controller contexte=%s error=%s screenshot=%s",
+                    "Snapshot CLI",
+                    exc,
+                    log_path_value(screenshot_path) if screenshot_path else None,
+                )
+                raise
+            logger.info("fin snapshot_cli status=ok log=%s", log_path_value(log_file))
+            return
         app = App(controller=controller, scan_interval_ms=args.interval)
         app.mainloop()
         logger.info("fin interface status=closed log=%s", log_path_value(log_file))

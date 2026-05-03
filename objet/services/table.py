@@ -51,7 +51,7 @@ class Table:
             return False
         
         # --- Main héros (2 cartes) ---
-        for card in self.cards.me:
+        for index, card in enumerate(self.cards.me, start=1):
             value, suit, confidence_value, confidence_suit = self.scan.scan_carte(
                 position_value=card.card_coordinates_value,
                 position_suit=card.card_coordinates_suit,
@@ -65,20 +65,24 @@ class Table:
                 suit_score=confidence_suit,
             )
             LOGGER.debug(
-                "SCAN carte zone=main value=%s suit=%s score_value=%.3f score_suit=%.3f",
+                "SCAN carte zone=main index=%s value=%s suit=%s formatted=%s score_value=%.3f score_suit=%.3f",
+                index,
                 value,
                 suit,
+                card.formatted,
                 confidence_value,
                 confidence_suit,
             )
         
-        for card in self.cards.board:
+        for index, card in enumerate(self.cards.board, start=1):
             value, suit, confidence_value, confidence_suit = self.scan.scan_carte(
                 position_value=card.card_coordinates_value,
                 position_suit=card.card_coordinates_suit,
                 template_set=card.template_set,
             )
             if value is None and suit is None:
+                card.reset()
+                LOGGER.debug("SCAN carte zone=board index=%s status=empty", index)
                 continue
             card.apply_observation(
                 value=value,
@@ -87,31 +91,50 @@ class Table:
                 suit_score=confidence_suit,
             )
             LOGGER.debug(
-                "SCAN carte zone=board value=%s suit=%s score_value=%.3f score_suit=%.3f",
+                "SCAN carte zone=board index=%s value=%s suit=%s formatted=%s score_value=%.3f score_suit=%.3f",
+                index,
                 value,
                 suit,
+                card.formatted,
                 confidence_value,
                 confidence_suit,
             )
-        for player in self.players.player:
+        for index, player in enumerate(self.players.player, start=1):
             etat , money = self.scan.scan_player(
                 position_money= player.fond.coordinates_value,
                 position_etat= player.coordonate_etat )
             player.apply_scan(etat,money)
-            LOGGER.debug("SCAN joueur etat=%s fond=%s", etat, money)
+            LOGGER.debug(
+                "SCAN joueur index=%s etat=%s fond=%s active=%s",
+                index,
+                etat,
+                money,
+                player.is_activate(),
+            )
+        self.players.cal_nbr_player_start()
+        self.players.cal_nbr_player_active()
             
-        for b in self.buttons:
+        for index, b in enumerate(self.buttons, start=1):
             texte = self.scan.scan_bouton(position= b.coordonate)
             b.apply_scan(texte)
-            LOGGER.debug("SCAN bouton texte=%s enabled=%s value=%s", texte, b.enabled, b.value)
+            LOGGER.debug(
+                "SCAN bouton index=%s texte=%s etat=%s enabled=%s value=%s",
+                index,
+                texte,
+                b.etat,
+                b.enabled,
+                b.value,
+            )
             
 
         self.pot.amount = self.scan.scan_money(self.pot.coordinates_value)
         LOGGER.info(
-            "fin scan_table status=ok main=%s board=%s joueurs=%s boutons=%s pot=%s",
+            "fin scan_table status=ok main=%s board=%s joueurs_actifs=%s/%s boutons_actifs=%s/%s pot=%s",
             _count_detected_cards(self.cards.me_cards()),
             _count_detected_cards(self.cards.board_cards()),
+            self.players.nbr_player_active,
             len(self.players.player),
+            sum(1 for button in self.buttons if button.is_activate()),
             len(list(self.buttons)),
             self.pot.amount,
         )
@@ -122,6 +145,8 @@ class Table:
         LOGGER.info("RESET table raison=nouvelle_partie")
         self.cards.reset()
         self.players.reset()
+        self.buttons.reset_all()
+        self.pot.reset()
         self.new_party_flag = True
         
     
