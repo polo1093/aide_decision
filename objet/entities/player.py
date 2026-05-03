@@ -94,7 +94,9 @@ class Player:
     def reset(self) -> None:
         self.fond.reset()
         self.active_at_start = True
-        self.continue_round = True
+        self.fond_start_Party = 0
+        self.etat = "play"
+        self.etat_modified_this_round = False
     
     def new_round(self):
         if self.etat_modified_this_round == False and self.etat == "play":

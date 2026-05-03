@@ -3,9 +3,8 @@ pandas
 PyAutoGUI
 pokereval
 keyboard
-pytweening
 opencv-python
 Pillow
-pytesseract
+easyocr
 matplotlib
 pyperclip

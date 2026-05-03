@@ -144,6 +144,7 @@ class ScanTable:
 
 
         if template_set == "hand" and self._should_skip_for_fold(image_card_value):
+            LOGGER.debug("SCAN carte skip raison=cover_main template_set=%s", template_set)
             return None, None, 0.0, 0.0
 
         if is_card_present(image_card_value):
@@ -160,7 +161,19 @@ class ScanTable:
             value_ok = carte_value if (carte_value and conf_val >= self.value_threshold) else None
             suit_ok = carte_suit if (carte_suit and conf_suit >= self.suit_threshold) else None
 
+            LOGGER.debug(
+                "SCAN carte brut template_set=%s value=%s suit=%s score_value=%.3f score_suit=%.3f accepted_value=%s accepted_suit=%s",
+                template_set,
+                carte_value,
+                carte_suit,
+                conf_val,
+                conf_suit,
+                value_ok,
+                suit_ok,
+            )
+
             return value_ok, suit_ok, conf_val, conf_suit
+        LOGGER.debug("SCAN carte vide template_set=%s", template_set)
         return None, None, 0.0, 0.0
 
 
@@ -179,13 +192,20 @@ class ScanTable:
 
     def scan_money(self, position) -> Optional[float]:
         img = self._extract_patch(position)
-        value, confidence, raw_text = self.ocr.read_amount(img)      
+        value, confidence, raw_text = self.ocr.read_amount(img)
+        LOGGER.debug(
+            "SCAN ocr_amount raw=%r confidence=%.3f value=%s",
+            raw_text,
+            confidence,
+            value,
+        )
         return None if value is None else value
 
 
     def scan_bouton(self, position):
         img = self._extract_patch(position)
-        texte, confidence = self.ocr.read_text(img)      
+        texte, confidence = self.ocr.read_text(img)
+        LOGGER.debug("SCAN ocr_button raw=%r confidence=%.3f", texte, confidence)
         return texte if texte else None
 
 

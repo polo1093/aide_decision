@@ -42,13 +42,14 @@ class Buttons:
     
     def one_is_activate(self) -> bool:
         for b in self.button:
-            if b.is_activate: return True
+            if b.is_activate():
+                return True
         return False
 
     def min_value(self)-> float:
         min = 1000
         for b in self.button :  
-            if b.value != 0:
+            if b.is_activate() and b.value != 0:
                 if b.value < min:
                     min = b.value      
         return 0 if min == 1000 else min
@@ -76,22 +77,26 @@ class Button:
         self.enabled = False
         self.score = 0.0
         self.texte = ""
+        self.etat = ""
+        self.value = 0.0
         
     def is_activate(self) -> bool:
         return self.enabled
         
     def apply_scan(self, texte)-> None:
         if not texte:
-            self.enabled = False
+            self.reset()
             return 
         self.texte=texte
         etat = one_element_in_str(list_etat_button,texte)
-        if etat != "" :
+        if etat:
             self.enabled = True
             self.etat = etat
             self.value =  float_in_str(texte) 
         else :
             self.enabled = False
+            self.etat = ""
+            self.value = 0.0
            
     
     
