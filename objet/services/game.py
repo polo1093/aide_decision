@@ -69,6 +69,7 @@ class Etat:
     cards_change : int = 0
     ev : float = 0
     Call_max : float = 0
+    starting_pot: Optional[float] = None
 
     def __post_init__(self) -> None:
         """Garantit que les états dépendants existent."""
@@ -147,6 +148,7 @@ class Etat:
             self._cal_max_call()
             self._cal_equity_required()
             self._calcul_montant_a_jouer()
+            self._validate_pot()
             LOGGER.info(
                 "CALCUL etat pot=%s to_call=%s equity_table=%s chance_1v1=%s ev=%s call_max=%s equity_min=%s montant=%s",
                 self.pot,
@@ -163,8 +165,22 @@ class Etat:
     
     
     def _calcul_montant_a_jouer(self) -> float:
-        self.montant_a_jouer = self.Call_max
+        self.montant_a_jouer = min(self.Call_max, 1000)
         return self.montant_a_jouer
+
+    def _validate_pot(self) -> None:
+        """Valide le pot et alerte si dépassement x10."""
+        if self.pot is None or self.starting_pot is None:
+            return
+
+        pot_max = self.starting_pot * 10
+        if self.pot > pot_max:
+            LOGGER.warning(
+                "POT_DEPASSEMENT pot=%.2f max_expected=%.2f (starting=%.2f x10)",
+                self.pot,
+                pot_max,
+                self.starting_pot,
+            )
     
     
     
@@ -454,10 +470,11 @@ class Game:
         self.table.New_Party()
         self.etat.cards.reset()
         self.etat.players.reset()
+        self.etat.starting_pot = self._last_pot_amount
         self.street = "IDLE"
         self._pending_new_party_cleanup = False
         self._new_party_flag = False
-        LOGGER.info("fin reset_partie status=ok hand=%s street=%s", self._hand_id, self.street)
+        LOGGER.info("fin reset_partie status=ok hand=%s street=%s starting_pot=%s", self._hand_id, self.street, self.etat.starting_pot)
 
     @property
     def new_party_detected(self) -> bool:
