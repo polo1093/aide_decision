@@ -52,8 +52,7 @@ GAME_VISIBLE_CARD_COUNT = {
     "RIVER": 7,
 }
 
-
-
+ 
 @dataclass
 class Etat:
     """Stocke l'état courant de la table et calcule les décisions."""
