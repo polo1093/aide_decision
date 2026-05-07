@@ -17,6 +17,7 @@ from objet.utils.calibration import bbox_from_region, load_coordinates
 from objet.utils.logging_config import get_logger
 from objet.scanner.cards_recognition import (
     TemplateIndex,
+    action_templates_for_dir,
     is_cover_me_cards, is_etat_player,
     is_card_present,
     recognize_number_and_suit,is_cover
@@ -39,12 +40,22 @@ class ScanTable:
     - ``screen_array`` conserve la capture plein écran en BGR (convention OpenCV).
     """
     #Todo fqire des objets scqn cqrds ... pour videe le fichier cards _recognition car bcp trop gros
-    def __init__(self, *, value_threshold: float = 0.75, suit_threshold: float = 0.75) -> None:
+    def __init__(
+        self,
+        *,
+        coord_path: Path | str = DEFAULT_COORD_PATH,
+        value_threshold: float = 0.75,
+        suit_threshold: float = 0.75,
+    ) -> None:
         # --- Config / calibration ---
-        self.coord_path = DEFAULT_COORD_PATH
+        self.coord_path = Path(coord_path)
+        self.game_dir = self.coord_path.parent
 
         # Gabarit de référence (ancre) utilisé par pyautogui/locate
-        self.reference_pil: Image.Image = Image.open(DEFAULT_ANCHOR_PATH).convert("RGB")
+        self.anchor_path = self.game_dir / "anchor.png"
+        self.reference_pil: Image.Image = Image.open(self.anchor_path).convert("RGB")
+        self.lose_path = self.game_dir / "lose.png"
+        self.action_templates = action_templates_for_dir(self.game_dir)
 
         # --- État runtime ---
         self.value_threshold = value_threshold
@@ -52,7 +63,7 @@ class ScanTable:
         self.screen_array: Optional[np.ndarray] = None     # plein écran, BGR
         self.anchor_box: Optional[Tuple[int, int, int, int]] = None
         self.scan_string: str = "init"
-        self.cards_root = DEFAULT_CARDS_ROOT
+        self.cards_root = self.game_dir / "Cards"
         self.template_index = TemplateIndex(self.cards_root)
         self.template_index.load()
         
@@ -180,13 +191,20 @@ class ScanTable:
 
     def _should_skip_for_fold(self,number_patch: np.ndarray) -> bool:
         state_patch = self._extract_patch(self.player_state_boxes, pad=0)
-        return  is_cover_me_cards(state_patch, threshold=0.6)
+        return is_cover_me_cards(
+            state_patch,
+            threshold=0.6,
+            action_templates=self.action_templates,
+        )
         
        
 
 
     def scan_player(self, position_money,position_etat):
-        etat = is_etat_player(self._extract_patch(position_etat))
+        etat = is_etat_player(
+            self._extract_patch(position_etat),
+            action_templates=self.action_templates,
+        )
         value = self.scan_money( position_money)       
         return etat, value
 
@@ -210,7 +228,7 @@ class ScanTable:
 
 
     def is_lose(self) -> bool:
-        return is_cover(self.screen_array, DEFAULT_LOSE_PATH)
+        return self.lose_path.exists() and is_cover(self.screen_array, self.lose_path)
         
         
         

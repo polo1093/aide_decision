@@ -56,6 +56,7 @@ GAME_VISIBLE_CARD_COUNT = {
 @dataclass
 class Etat:
     """Stocke l'état courant de la table et calcule les décisions."""
+    coord_path: Path | str = Path("config/PMU/coordinates.json")
     cards: CardsState = field(default_factory=CardsState)
     players: Players = field(default_factory=Players)
     chance_win_0: Optional[float] = None
@@ -72,8 +73,9 @@ class Etat:
 
     def __post_init__(self) -> None:
         """Garantit que les états dépendants existent."""
-        self.cards = CardsState()
-        self.players = Players()
+        self.coord_path = Path(self.coord_path)
+        self.cards = CardsState(coord_path=self.coord_path)
+        self.players = Players(coord_path=self.coord_path)
 
     
     
@@ -238,8 +240,9 @@ class Etat:
 class Game:
     """Stocke l'état courant de la table et calcule les décisions."""
 
-    etat: Etat = field(default_factory=Etat)
-    table: Table = field(default_factory=Table)
+    coord_path: Path | str = Path("config/PMU/coordinates.json")
+    etat: Optional[Etat] = None
+    table: Optional[Table] = None
     resultat_calcul: Dict[str, Any] = field(default_factory=dict)
     street: str = "IDLE"
     workflow: Optional[str] = None
@@ -251,8 +254,11 @@ class Game:
 
     def __post_init__(self) -> None:
         """Garantit que les états dépendants existent."""
-        self.table.cards = CardsState()
-        self.table.buttons = Buttons()
+        self.coord_path = Path(self.coord_path)
+        if self.etat is None:
+            self.etat = Etat(coord_path=self.coord_path)
+        if self.table is None:
+            self.table = Table(coord_path=self.coord_path)
         self.table.captures = CaptureState()
         
 

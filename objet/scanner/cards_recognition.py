@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 
 import cv2
 import numpy as np
@@ -93,18 +93,19 @@ class TemplateIndex:
             default = ROOT_TEMPLATE_SET
 
         # 2) Sous-dossiers (board/, hand/, ...)
-        for subdir in sorted(self.root.iterdir()):
-            if not subdir.is_dir():
-                continue
-            numbers = self._load_dir(subdir / "numbers")
-            suits = self._load_dir(subdir / "suits")
-            if not numbers and not suits:
-                continue
-            key = subdir.name
-            self.numbers_by_set[key] = numbers
-            self.suits_by_set[key] = suits
-            if default is None and ROOT_TEMPLATE_SET not in self.numbers_by_set:
-                default = key
+        if self.root.exists():
+            for subdir in sorted(self.root.iterdir()):
+                if not subdir.is_dir():
+                    continue
+                numbers = self._load_dir(subdir / "numbers")
+                suits = self._load_dir(subdir / "suits")
+                if not numbers and not suits:
+                    continue
+                key = subdir.name
+                self.numbers_by_set[key] = numbers
+                self.suits_by_set[key] = suits
+                if default is None and ROOT_TEMPLATE_SET not in self.numbers_by_set:
+                    default = key
 
         if default is None:
             # Aucun ensemble explicite → utiliser le premier trouvé ou root
@@ -412,6 +413,20 @@ ACTION_TEMPLATES: Dict[str, Path] = {
     "play": ACTIONS_DIR / "play.png",
     
 }
+
+
+def action_templates_for_dir(game_dir: Path | str) -> Dict[str, Path]:
+    """Build action template paths for a game configuration directory."""
+
+    base = Path(game_dir)
+    return {
+        "CHECK": base / "check.png",
+        "paid": base / "paie.png",
+        "RELANCER": base / "relance.png",
+        "fold": base / "fold.png",
+        "No_start": base / "sit_out.png",
+        "play": base / "play.png",
+    }
  
 
 
@@ -422,25 +437,37 @@ def _load_is_cover_me_cards_template(path) -> Optional[Image.Image]:
         return img.convert("RGB")
 
 
-def is_cover_me_cards(region: Image.Image,threshold: float = 0.55,) -> bool:
+def is_cover_me_cards(
+    region: Image.Image,
+    threshold: float = 0.55,
+    *,
+    action_templates: Optional[Mapping[str, Path]] = None,
+) -> bool:
     """Return ``True`` when the *fold* overlay is detected inside ``patch``."""
     # haystack = région où on cherche (player_state_me), en niveaux de gris
     region = _ensure_pil_image(region)
     haystack_rgb = region.convert("RGB")
     haystack_gray = cv2.cvtColor(np.array(haystack_rgb), cv2.COLOR_RGB2GRAY)
-    ACTION_TEMPLATES.pop("paid", None)
-    for path in ACTION_TEMPLATES.values():
+    templates = dict(action_templates or ACTION_TEMPLATES)
+    templates.pop("paid", None)
+    for path in templates.values():
         if is_cover(haystack_gray, path, threshold):
             return True
     return False
 
-def is_etat_player(region: Image.Image,threshold: float = 0.55,) -> bool:
+def is_etat_player(
+    region: Image.Image,
+    threshold: float = 0.55,
+    *,
+    action_templates: Optional[Mapping[str, Path]] = None,
+) -> bool:
     """Return  *fold* overlay is detected inside ``patch``."""
     # haystack = région où on cherche (player_state_me), en niveaux de gris
     region = _ensure_pil_image(region)
     haystack_rgb = region.convert("RGB")
     haystack_gray = cv2.cvtColor(np.array(haystack_rgb), cv2.COLOR_RGB2GRAY)
-    for action_name, path in ACTION_TEMPLATES.items():
+    templates = action_templates or ACTION_TEMPLATES
+    for action_name, path in templates.items():
         if is_cover(haystack_gray, path, threshold):
             return action_name
     return False
@@ -449,8 +476,11 @@ def is_etat_player(region: Image.Image,threshold: float = 0.55,) -> bool:
 def is_cover(screen_array: np.ndarray, template_path: Path, threshold: float = 0.55,) -> bool:
     """Return ``True`` when the *fold* overlay is detected inside ``patch``."""
     # haystack = région où on cherche (player_state_me), en niveaux de gris
-    haystack_rgb = cv2.cvtColor(screen_array, cv2.COLOR_BGR2RGB)
-    haystack_gray = cv2.cvtColor(haystack_rgb, cv2.COLOR_RGB2GRAY)
+    if screen_array.ndim == 2:
+        haystack_gray = screen_array
+    else:
+        haystack_rgb = cv2.cvtColor(screen_array, cv2.COLOR_BGR2RGB)
+        haystack_gray = cv2.cvtColor(haystack_rgb, cv2.COLOR_RGB2GRAY)
 
     template_rgb = _load_is_cover_me_cards_template(template_path)
     template_gray = cv2.cvtColor(np.array(template_rgb), cv2.COLOR_RGB2GRAY)

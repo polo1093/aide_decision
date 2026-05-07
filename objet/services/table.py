@@ -40,6 +40,11 @@ class Table:
     
     
     def __post_init__(self) -> None:
+        self.coord_path = Path(self.coord_path)
+        self.cards = CardsState(coord_path=self.coord_path)
+        self.buttons = Buttons(coord_path=self.coord_path)
+        self.players = Players(coord_path=self.coord_path)
+        self.scan = ScanTable(coord_path=self.coord_path)
         regions, _, _ = load_coordinates(self.coord_path)
         self.pot.coordinates_value = bbox_from_region(regions.get("pot"))
         
