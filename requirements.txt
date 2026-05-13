@@ -6,5 +6,6 @@ keyboard
 opencv-python
 Pillow
 easyocr
+python-bidi==0.4.2
 matplotlib
 pyperclip
