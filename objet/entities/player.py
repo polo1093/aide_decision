@@ -66,10 +66,10 @@ class Players:
             
     
     def cal_nbr_player_start(self)-> int:
-        self.nbr_player_start = sum([self.player[i].active_at_start for i in range(5)])
+        self.nbr_player_start = sum(1 for player in self.player if player.active_at_start)
     
     def cal_nbr_player_active(self)-> int:
-        self.nbr_player_active = sum([self.player[i].is_activate() for i in range(5)])
+        self.nbr_player_active = sum(1 for player in self.player if player.is_activate())
     
     
     
