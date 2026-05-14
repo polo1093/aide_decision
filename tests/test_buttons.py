@@ -35,3 +35,16 @@ def test_min_value_ignores_disabled_buttons() -> None:
     )
 
     assert buttons.min_value() == 2.0
+
+
+def test_check_button_makes_min_value_free_even_with_bet_button() -> None:
+    buttons = Buttons(
+        button=[
+            Button(enabled=True, etat="check", value=0.0),
+            Button(enabled=True, etat="mise", value=0.02),
+        ]
+    )
+
+    assert buttons.has_free_action() is True
+    assert buttons.has_aggressive_action() is True
+    assert buttons.min_value() == 0.0

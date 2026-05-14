@@ -46,7 +46,23 @@ class Buttons:
                 return True
         return False
 
+    def has_active_state(self, *states: str) -> bool:
+        expected = {state.lower() for state in states}
+        return any(
+            b.is_activate() and b.etat.lower() in expected
+            for b in self.button
+        )
+
+    def has_free_action(self) -> bool:
+        return self.has_active_state("check")
+
+    def has_aggressive_action(self) -> bool:
+        return self.has_active_state("mise", "relance", "all-in")
+
     def min_value(self)-> float:
+        if self.has_free_action():
+            return 0.0
+
         min = 1000
         for b in self.button :  
             if b.is_activate() and b.value != 0:

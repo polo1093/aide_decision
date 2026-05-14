@@ -40,7 +40,9 @@ class Decision:
         if buttons is None or not buttons.one_is_activate():
             return _log_decision(DecisionResult(action="WAIT", reason="not_buttons"))
 
-        to_call = buttons.min_value()
+        free_action = _free_action_available(buttons)
+        aggressive_action = _aggressive_action_available(buttons)
+        to_call = 0.0 if free_action else buttons.min_value()
         equity = getattr(game.etat, "chance_win", None)
         equity_required = getattr(game.etat, "equity_required", None)
         call_max = getattr(game.etat, "Call_max", 0.0)
@@ -49,7 +51,7 @@ class Decision:
 
         # No money to add: never CALL. Check weak/medium hands, raise strong ones.
         if to_call <= 0:
-            if equity >= self.FREE_RAISE_EQUITY:
+            if aggressive_action and equity >= self.FREE_RAISE_EQUITY:
                 return _log_decision(DecisionResult(action="RAISE", reason="free_option_strong_equity"))
             return _log_decision(DecisionResult(action="CHECK", reason="free_option_no_call_needed"))
 
@@ -78,6 +80,33 @@ class Decision:
 def _log_decision(result: DecisionResult) -> DecisionResult:
     LOGGER.info("DECISION action=%s reason=%s raise=%s", result.action, result.reason, result.raise_amount)
     return result
+
+
+def _free_action_available(buttons) -> bool:
+    has_free_action = getattr(buttons, "has_free_action", None)
+    if callable(has_free_action):
+        return bool(has_free_action())
+    return any(
+        getattr(button, "enabled", False) and getattr(button, "etat", "").lower() == "check"
+        for button in _iter_buttons(buttons)
+    )
+
+
+def _aggressive_action_available(buttons) -> bool:
+    has_aggressive_action = getattr(buttons, "has_aggressive_action", None)
+    if callable(has_aggressive_action):
+        return bool(has_aggressive_action())
+    return any(
+        getattr(button, "enabled", False) and getattr(button, "etat", "").lower() in {"mise", "relance", "all-in"}
+        for button in _iter_buttons(buttons)
+    )
+
+
+def _iter_buttons(buttons):
+    try:
+        return iter(buttons)
+    except TypeError:
+        return iter(())
 
 
 __all__ = ["ActionType", "DecisionResult", "Decision"]

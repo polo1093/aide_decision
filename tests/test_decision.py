@@ -4,6 +4,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Optional
 
+from objet.entities.buttons import Button, Buttons
 from objet.entities.card import Card, CardsState
 from objet.services.decision import Decision
 
@@ -178,7 +179,13 @@ def test_check_when_action_is_free_and_equity_is_not_strong() -> None:
 
 
 def test_raise_when_action_is_free_and_equity_is_strong() -> None:
-    game = DummyGame(_cards_state("AS", "KS"), buttons=DummyButtons(min_value=0.0))
+    buttons = Buttons(
+        button=[
+            Button(enabled=True, etat="check", value=0.0),
+            Button(enabled=True, etat="mise", value=0.02),
+        ]
+    )
+    game = DummyGame(_cards_state("AS", "KS"), buttons=buttons)
     game.etat.chance_win = 0.70
     decision = Decision()
 
@@ -186,3 +193,34 @@ def test_raise_when_action_is_free_and_equity_is_strong() -> None:
 
     assert result.action == "RAISE"
     assert result.reason == "free_option_strong_equity"
+
+
+def test_check_button_prevents_fold_when_bet_button_is_also_visible() -> None:
+    buttons = Buttons(
+        button=[
+            Button(enabled=True, etat="check", value=0.0),
+            Button(enabled=True, etat="mise", value=0.02),
+        ]
+    )
+    game = DummyGame(_cards_state("AS", "KS"), buttons=buttons)
+    game.etat.Call_max = 0.0
+    game.etat.chance_win = 0.20
+    game.etat.equity_required = 0.35
+    decision = Decision()
+
+    result = decision.decide(game)
+
+    assert result.action == "CHECK"
+    assert result.reason == "free_option_no_call_needed"
+
+
+def test_check_is_recommended_when_no_raise_button_exists_even_with_strong_equity() -> None:
+    buttons = Buttons(button=[Button(enabled=True, etat="check", value=0.0)])
+    game = DummyGame(_cards_state("AS", "KS"), buttons=buttons)
+    game.etat.chance_win = 0.70
+    decision = Decision()
+
+    result = decision.decide(game)
+
+    assert result.action == "CHECK"
+    assert result.reason == "free_option_no_call_needed"
