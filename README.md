@@ -1,95 +1,172 @@
-# aide de décision
-Philosophie. 
-Très important : si une fonction n'a pas le bon argument, ne peut pas charger une image, ne reçoit pas les bonnes choses en entrée, et bien je veux pas faire une exception. Je veux que le programme plante, crache.
+# Aide Décision
 
-Je veux que le code soit simple à comprendre et puisse cracher si il y a un truc qui ne fonctionne pas. Je veux pas d'exceptions qui me cachent un problème. 
+Assistant expérimental d'aide à la décision pour une table de poker en ligne.
 
-## Architecture globale
+Le projet capture l'écran, retrouve la table, lit les cartes, le pot, les joueurs et les boutons d'action, puis affiche une recommandation simple (`CHECK`, `CALL`, `FOLD`, `RAISE` ou `WAIT`) avec les métriques utiles.
 
-L’application est structurée autour d’un noyau `Game` qui orchestre l’état de la table, des joueurs, des boutons et des cartes, ainsi que la logique de partie et de décision.
+## Objectif
 
-### 1. Game
+L'application sert à analyser l'état courant d'une table, pas à jouer automatiquement.
 
-1.1. **Table**  
-&nbsp;&nbsp;&nbsp;&nbsp;1.1.1. `scan_table`  
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;1.1.1.1. (ajout du scan *fond* et *pot* en OCR)  
-&nbsp;&nbsp;&nbsp;&nbsp;1.1.2. `Card_state`  
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;1.1.2.1. `Card` (regrouper toutes les classes d’entities carte en une seule)  
-&nbsp;&nbsp;&nbsp;&nbsp;1.1.3. `Buttons_state`  
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;1.1.3.1. `Button`  
-&nbsp;&nbsp;&nbsp;&nbsp;1.1.4. `Player_state`  
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;1.1.4.1. `Player`
+Elle combine :
 
-1.2. **Party**  
-&nbsp;&nbsp;&nbsp;&nbsp;1.2.1. Gestion des états de la partie (phase de jeu, street, main en cours, historique, etc.)
+- capture écran et détection de table ;
+- reconnaissance des cartes par templates ;
+- OCR pour les montants et textes de boutons ;
+- suivi de l'état de la main ;
+- calcul d'équité via simulation Monte Carlo ;
+- décision basée sur l'équité, le coût à payer et les boutons disponibles.
 
-1.3. **Décission**  
-&nbsp;&nbsp;&nbsp;&nbsp;Moteur de décision basé sur l’état courant du `Game` / `Table` / `Player_state` (rules, heuristiques, modèle ML, etc.)
+## Philosophie
 
-### 2. Contrôleur
-- joue le rôle d’orchestrateur haut niveau :  
-  - création et cycle de vie de `Game`,  
-  - coordination entre  `Game` et `Décission`,  
-  - gestion des événements externes (UI, hotkeys, logs, etc.).
+Le code doit rester lisible et explicite. Les erreurs de configuration ou de programmation doivent rester visibles.
 
-### 3. Afficheur / `launch.py` + Thinker
-
-- `launch.py` sert de point d’entrée applicatif.  
-- Rôle principal :  
-  - initialiser le “thinker” (boucle principale d’analyse/decision),  
-  - câbler l’affichage (console, UI, overlay…) avec l’état de `Game` / `Table`,  
-  - piloter la fréquence des scans (`scan_table`) et des décisions.
-
-Ce schéma sert de référence pour l’implémentation et pour organiser les modules Python (fichiers et packages) selon cette hiérarchie logique.
-
-
-flowchart LR
-  A[config/coordinates.json] --> B[Capture/Screen Grab] fait
-  B --> C[Crop & Pré-traitement] fait
-  C --> D[OCR / Matching] en cours
-  D --> E[État du jeu] à faire
-  E --> F[Moteur d'aide à la décision] à faire
-  F --> G[Sorties: console/UI/overlay] en cours
-
-
-
-
-
-To do list 
-
-Réfaire une séance de capture avec OBS . 
-Refaire les paramétrages et le crop de l'écran, et tout ça, les screen au bon endroit . 
-Ajoutez les boutons et le fond. 
-Tester l'OCR. 
-
-Ajouter une fonction pour détecter un truc bizarre qui est affiché à l'écran. 
-Pour ajouter une fonction pour détecter si c'est à nous de jouer ou pas. 
-
-
-
+En revanche, les erreurs normales de scan en live ne doivent pas arrêter l'application. Par exemple, une carte mal reconnue, un board incomplet pendant une frame, ou une table temporairement introuvable doivent produire un `SKIP` dans les logs plutôt qu'une erreur bloquante.
 
 ## Installation
 
-1. Cloner le dépôt.
-2. Installer Python 3.9 ou version supérieure.
-3. Installer les dépendances :
+Pré-requis :
 
+- Windows recommandé, car le projet utilise la capture écran et PyAutoGUI ;
+- Python 3.11 testé dans l'environnement local ;
+- un profil de table dans `config/<jeu>/coordinates.json`.
 
-## Utilitaires de calibration partagés
+Créer puis activer un environnement virtuel :
 
-Les scripts de calibration (`capture_cards.py`, `identify_card.py`, `position_zones*.py`,
-`zone_project.py`) s'appuient désormais sur un module commun `scripts/_utils.py`.
-Ce module centralise :
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
 
-- le chargement de `coordinates.json` (résolution des `templates`, conversion
-  robuste des entiers) ;
-- les fonctions de clamp et d'extraction d'images utilisées par les différents
-  CLI/UI.
+EasyOCR peut télécharger ses modèles au premier lancement.
 
-Les interfaces en ligne de commande existantes ne changent pas : les mêmes
-options et arguments continuent de fonctionner, avec un comportement aligné
-entre tous les outils.
+## Lancement
 
-## Avertissement
+Lister les profils disponibles :
 
-Ce projet est fourni à titre expérimental.
+```powershell
+.\.venv\Scripts\python.exe launch.py --list-games
+```
+
+Lancer l'interface :
+
+```powershell
+.\.venv\Scripts\python.exe launch.py --game PMU --interval 1000
+```
+
+Faire un seul scan depuis le terminal :
+
+```powershell
+.\.venv\Scripts\python.exe launch.py --game PMU --snapshot
+```
+
+Dans l'interface, le menu **Outils** permet de lancer les étapes de calibration et validation sans retaper les commandes.
+
+## Workflow De Calibration
+
+Le profil `PMU` est stocké dans `config/PMU/`. Les coordonnées, templates et captures de debug y sont associés.
+
+Pipeline rapide avec une vidéo OBS :
+
+```powershell
+.\.venv\Scripts\python.exe scripts\quick_setup.py --game PMU --video "C:\captures\session.mp4"
+```
+
+Étapes principales :
+
+1. Éditer les zones à scanner.
+2. Extraire des frames depuis une vidéo.
+3. Identifier et labelliser les cartes manquantes.
+4. Valider la reconnaissance sur la vidéo.
+
+Commandes utiles :
+
+```powershell
+.\.venv\Scripts\python.exe scripts\quick_setup.py --game PMU --skip-capture --skip-identify --skip-capture-validation
+.\.venv\Scripts\python.exe scripts\Crop_Video_Frames.py --game-dir config\PMU --video "C:\captures\session.mp4"
+.\.venv\Scripts\python.exe scripts\identify_card.py --game PMU
+.\.venv\Scripts\python.exe scripts\capture_cards.py --game PMU --game-dir config\PMU --video "C:\captures\session.mp4"
+```
+
+## Architecture
+
+```text
+launch.py
+  -> Controller
+      -> Game
+          -> Table
+              -> ScanTable
+              -> CardsState / Players / Buttons / Pot
+          -> Etat
+              -> calcul équité, EV, call max
+      -> Decision
+          -> recommandation affichée dans l'UI
+```
+
+Modules principaux :
+
+- `objet/services/controller.py` : orchestre un cycle complet et prépare l'état affichable.
+- `objet/services/game.py` : maintient l'état stable de la main, détecte les nouvelles parties et calcule les métriques.
+- `objet/services/table.py` : déclenche les scans et remplit les entités de table.
+- `objet/services/decision.py` : transforme les métriques et boutons en décision.
+- `objet/scanner/scan.py` : capture écran, recherche de table et scan des zones.
+- `objet/scanner/cards_recognition.py` : reconnaissance des cartes par templates.
+- `objet/scanner/amount_ocr.py` : OCR des montants et textes.
+- `objet/entities/` : cartes, joueurs et boutons.
+- `scripts/` : outils de calibration, labellisation et validation.
+
+## Logs Et Dépannage
+
+Les logs sont écrits dans `logs/`.
+
+Fichiers utiles :
+
+- `logs/app.log` : log applicatif courant ;
+- `logs/interface_*.log` : session d'interface ;
+- `logs/errors/` : captures liées aux erreurs bloquantes.
+
+Lignes fréquentes :
+
+- `SKIP table_introuvable` : l'ancre de table n'a pas été retrouvée ;
+- `SKIP calcul raison=scan_board_incoherent` : scan partiel du board ignoré ;
+- `SKIP calcul raison=cartes_dupliquees` : reconnaissance incohérente, souvent une couleur mal lue ;
+- `DECISION action=...` : décision finale du cycle.
+
+Pour suivre les erreurs :
+
+```powershell
+Select-String -Path logs\*.log -Pattern "ERROR|Traceback|SKIP calcul|DECISION"
+```
+
+## Tests
+
+Lancer toute la suite :
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+Tests importants :
+
+- `tests/test_game.py` : suivi de main, nouvelle partie, calculs et scans incohérents ;
+- `tests/test_decision.py` : logique de décision ;
+- `tests/test_buttons.py` : interprétation des boutons, notamment priorité au `check` ;
+- `tests/test_cards_recognition.py` : reconnaissance et overlays ;
+- `tests/test_launch_tools.py` : commandes générées par le menu outils.
+
+## Limites
+
+Le projet dépend fortement :
+
+- de la résolution écran ;
+- de la stabilité visuelle du site ;
+- de la qualité des templates de cartes ;
+- de la précision OCR.
+
+Après un changement d'interface, de zoom, de résolution ou de thème visuel, il faut probablement refaire une calibration.
+
+## Statut
+
+Projet personnel en évolution active. Les parties les plus sensibles sont la calibration, la reconnaissance des cartes et la robustesse des scans live.
