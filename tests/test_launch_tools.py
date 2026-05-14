@@ -14,6 +14,7 @@ from launch import (
     build_zone_editor_args,
     format_command,
     normalise_game_name,
+    profile_status,
     script_path_for,
 )
 
@@ -103,3 +104,19 @@ def test_format_command_quotes_parts_with_spaces() -> None:
     assert format_command(["python", r"C:\with space\tool.py", "--game", "PMU"]) == (
         'python "C:\\with space\\tool.py" --game PMU'
     )
+
+
+def test_profile_status_reports_player_history_count(tmp_path: Path) -> None:
+    config_root = tmp_path / "config"
+    history_root = tmp_path / "history"
+    game_dir = config_root / "PMU"
+    game_dir.mkdir(parents=True)
+    (game_dir / "coordinates.json").write_text("{}", encoding="utf-8")
+    history_root.mkdir()
+    (history_root / "PMU.json").write_text('{"players": {"Alice": {}, "Bob": {}}}', encoding="utf-8")
+
+    items = profile_status("PMU", config_root=config_root, history_root=history_root)
+
+    assert items[-1].label == "Historique"
+    assert items[-1].ok is True
+    assert items[-1].detail == "2 joueur(s)"

@@ -17,6 +17,12 @@ from objet.entities.buttons import Buttons
 
 from objet.services.table import Table
 from objet.scanner.cards_recognition import CardObservation
+from objet.services.equity import (
+    OpponentProfile,
+    opponent_profiles_from_players,
+    profiles_for_opponent_count,
+    weighted_monte_carlo_equity,
+)
 from objet.utils.capture import CaptureState
 from objet.utils.logging_config import get_logger
 
@@ -71,6 +77,7 @@ class Etat:
     ev : float = 0
     Call_max : float = 0
     starting_pot: Optional[float] = None
+    opponent_profiles: list[OpponentProfile] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         """Garantit que les états dépendants existent."""
@@ -136,17 +143,27 @@ class Etat:
 
         self.chance_win_0 = HandEvaluator.evaluate_hand(hero_cards, board_poker_cards)
         opponent_count = max(0, self.players.nbr_player_active)
-        self.chance_win = _monte_carlo_equity(
-            hero_cards=hero_cards,
-            board_cards=board_poker_cards,
-            opponent_count=opponent_count,
-            simulations=self.monte_carlo_simulations,
-        )
+        profiles = profiles_for_opponent_count(self.opponent_profiles, opponent_count)
+        if profiles:
+            self.chance_win = weighted_monte_carlo_equity(
+                hero_cards=hero_cards,
+                board_cards=board_poker_cards,
+                opponent_profiles=profiles,
+                simulations=self.monte_carlo_simulations,
+            )
+        else:
+            self.chance_win = _monte_carlo_equity(
+                hero_cards=hero_cards,
+                board_cards=board_poker_cards,
+                opponent_count=opponent_count,
+                simulations=self.monte_carlo_simulations,
+            )
         LOGGER.debug(
-            "CALCUL chance_win hero=%s board=%s adversaires=%s chance_1v1=%s equity_table=%s simulations=%s",
+            "CALCUL chance_win hero=%s board=%s adversaires=%s profiles=%s chance_1v1=%s equity_table=%s simulations=%s",
             [card.formatted for card in me_cards],
             [card.formatted for card in board_cards],
             opponent_count,
+            [profile.action for profile in profiles],
             self.chance_win_0,
             self.chance_win,
             self.monte_carlo_simulations,
@@ -222,10 +239,19 @@ class Etat:
     
     
     
-    def update_players(self, players: Players) -> None:
+    def update_players(
+        self,
+        players: Players,
+        opponent_profiles: Optional[Sequence[OpponentProfile]] = None,
+    ) -> None:
         self.players = players
         self.players.cal_nbr_player_start()
         self.players.cal_nbr_player_active()
+        self.opponent_profiles = (
+            list(opponent_profiles)
+            if opponent_profiles is not None
+            else opponent_profiles_from_players(self.players)
+        )
 
 
     def update_cards_state(self, cards_state: CardsState) -> bool:
@@ -265,9 +291,17 @@ class Etat:
         self.cards_change -=1
         return board_is_coherent
 
-    def update(self, *, cards_state: CardsState, players: Players, pot: Optional[float], to_call: Optional[float] = None) -> None:
+    def update(
+        self,
+        *,
+        cards_state: CardsState,
+        players: Players,
+        pot: Optional[float],
+        to_call: Optional[float] = None,
+        opponent_profiles: Optional[Sequence[OpponentProfile]] = None,
+    ) -> None:
         cards_are_coherent = self.update_cards_state(cards_state)
-        self.update_players(players)
+        self.update_players(players, opponent_profiles=opponent_profiles)
         self.pot = pot if pot else self.pot
         self.to_call = DEFAULT_TO_CALL if to_call is None else max(0.0, to_call)
         if not cards_are_coherent:
@@ -288,6 +322,7 @@ class Game:
     coord_path: Path | str = Path("config/PMU/coordinates.json")
     etat: Optional[Etat] = None
     table: Optional[Table] = None
+    player_history: Optional[Any] = None
     resultat_calcul: Dict[str, Any] = field(default_factory=dict)
     street: str = "IDLE"
     workflow: Optional[str] = None
@@ -347,11 +382,17 @@ class Game:
             LOGGER.info("fin update_game status=nouvelle_partie")
             return True
 
+        opponent_profiles = None
+        if self.player_history is not None:
+            self.player_history.record_players(self.table.players, hand_id=self._hand_id)
+            opponent_profiles = self.player_history.opponent_profiles_from_players(self.table.players)
+
         self.etat.update(
             cards_state=self.table.cards,
             players=self.table.players,
             pot=getattr(self.table.pot, "amount", None),
             to_call=self._current_to_call(),
+            opponent_profiles=opponent_profiles,
         )
         LOGGER.info(
             "ETAT stable hand=%s street=%s hero=%s board=%s pot=%s raw_hero=%s raw_board=%s joueurs=%s/%s",

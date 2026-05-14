@@ -12,6 +12,7 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Optional
 
 from objet.services.controller import Controller, ControllerViewState
+from objet.services.player_history import DEFAULT_PLAYER_HISTORY_DIR, player_history_path
 from objet.utils.debug_capture import capture_blocking_error_screen
 from objet.utils.logging_config import (
     configure_logging,
@@ -168,6 +169,7 @@ class App(tk.Tk):
             ttk.Button(self.frm_tools, text="Frames video", command=self._run_capture_frames),
             ttk.Button(self.frm_tools, text="Identifier", command=self._run_identify_cards),
             ttk.Button(self.frm_tools, text="Valider video", command=self._run_validate_cards),
+            ttk.Button(self.frm_tools, text="Clean histo", command=self._clear_player_history),
         ]
         self.frm_players = ttk.LabelFrame(self.frm_side, text="Joueurs")
         self.var_players = tk.StringVar(value="")
@@ -223,6 +225,8 @@ class App(tk.Tk):
         tools.add_command(label="Decouper une video en images...", command=self._run_capture_frames)
         tools.add_command(label="Identifier / labelliser les cartes", command=self._run_identify_cards)
         tools.add_command(label="Valider le scan cartes sur video...", command=self._run_validate_cards)
+        tools.add_separator()
+        tools.add_command(label="Nettoyer historique joueurs", command=self._clear_player_history)
 
         menubar.add_cascade(label="Outils", menu=tools)
         self.configure(menu=menubar)
@@ -495,6 +499,26 @@ class App(tk.Tk):
             build_validate_cards_args(game, video),
             label=f"validation cartes {game}",
         )
+
+    def _clear_player_history(self) -> None:
+        game = self._current_game_name()
+        if not messagebox.askyesno(
+            "Nettoyer historique",
+            f"Supprimer l'historique long terme des joueurs pour {game} ?",
+        ):
+            return
+
+        self.stop_scan()
+        try:
+            cleared_path = self.controller.clear_player_history()
+        except Exception as exc:
+            logger.exception("erreur nettoyage_historique_joueurs game=%s", game)
+            messagebox.showerror("Nettoyage impossible", str(exc))
+            return
+
+        self._refresh_profile_status()
+        self.var_notice.set(f"Historique joueurs vide pour {game}")
+        self._set_text(f"Historique joueurs nettoye pour {game}\nFichier: {cleared_path}")
 
     def _ask_video(self) -> Optional[str]:
         selected = filedialog.askopenfilename(
@@ -769,11 +793,16 @@ class ProfileItem:
         self.detail = detail
 
 
-def profile_status(game_name: str, config_root: Path | str = CONFIG_ROOT) -> list[ProfileItem]:
+def profile_status(
+    game_name: str,
+    config_root: Path | str = CONFIG_ROOT,
+    history_root: Path | str = DEFAULT_PLAYER_HISTORY_DIR,
+) -> list[ProfileItem]:
     game_dir = Path(config_root) / game_name
     action_files = ["check.png", "paie.png", "relance.png", "fold.png", "sit_out.png", "play.png"]
     cards_dir = game_dir / "Cards"
     cards_png = list(cards_dir.rglob("*.png")) if cards_dir.exists() else []
+    history_item = _history_profile_item(game_name, history_root=history_root)
     return [
         _profile_item("Dossier", game_dir, "profil"),
         _profile_item("Coordinates", game_dir / "coordinates.json", "zones"),
@@ -784,11 +813,28 @@ def profile_status(game_name: str, config_root: Path | str = CONFIG_ROOT) -> lis
             all((game_dir / name).exists() for name in action_files),
             f"{sum(1 for name in action_files if (game_dir / name).exists())}/{len(action_files)} fichiers",
         ),
+        history_item,
     ]
 
 
 def _profile_item(label: str, path: Path, detail: str) -> ProfileItem:
     return ProfileItem(label, path.exists(), detail if path.exists() else "manquant")
+
+
+def _history_profile_item(game_name: str, *, history_root: Path | str) -> ProfileItem:
+    path = player_history_path(game_name, root_dir=history_root)
+    if not path.exists():
+        return ProfileItem("Historique", True, "0 joueur")
+    try:
+        import json
+
+        with path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        players = data.get("players", {}) if isinstance(data, dict) else {}
+        count = len(players) if isinstance(players, dict) else 0
+    except Exception:
+        return ProfileItem("Historique", False, "illisible")
+    return ProfileItem("Historique", True, f"{count} joueur(s)")
 
 
 def parse_args(argv=None):

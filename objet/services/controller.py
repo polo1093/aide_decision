@@ -39,6 +39,7 @@ class ControllerViewState:
     player_active: Optional[int] = None
     buttons: list[str] = field(default_factory=list)
     target_button: Optional[dict[str, object]] = None
+    opponent_profiles: list[str] = field(default_factory=list)
     pot: object = None
     to_call: object = None
     equity_table: object = None
@@ -95,6 +96,7 @@ class ControllerViewState:
             f" {metrics}\n"
             f" {'  |  '.join(self.buttons)}\n"
             f" Bouton cible: {self.target_button}\n"
+            f" Profils adverses: {self.opponent_profiles}\n"
             f"Decision -> {decision_line}\n"
         )
 
@@ -108,6 +110,9 @@ class Controller:
         telemetry_dir: Optional[Path | str] = None,
         telemetry_enabled: bool = True,
         telemetry_recorder=None,
+        player_history_dir: Optional[Path | str] = None,
+        player_history_enabled: bool = True,
+        player_history_store=None,
     ):
         self.count = 0
         self.running = False
@@ -117,9 +122,19 @@ class Controller:
         self.coord_path = Path(coord_path) if coord_path is not None else Path("config") / game_name / "coordinates.json"
         from objet.services.decision import Decision
         from objet.services.game import Game
+        from objet.services.player_history import DEFAULT_PLAYER_HISTORY_DIR, PlayerHistoryStore
         from objet.services.telemetry import DEFAULT_TELEMETRY_DIR, TelemetryRecorder
 
-        self.game = Game(coord_path=self.coord_path)
+        self.player_history = (
+            player_history_store
+            if player_history_store is not None
+            else PlayerHistoryStore(
+                root_dir=player_history_dir if player_history_dir is not None else DEFAULT_PLAYER_HISTORY_DIR,
+                game_name=game_name,
+                enabled=player_history_enabled,
+            )
+        )
+        self.game = Game(coord_path=self.coord_path, player_history=self.player_history)
         self.decision = Decision()
         self.telemetry = (
             telemetry_recorder
@@ -134,6 +149,9 @@ class Controller:
 
     def main(self) -> str:
         return self.run_cycle().to_text()
+
+    def clear_player_history(self) -> Path:
+        return self.player_history.clear()
 
     def run_cycle(self) -> ControllerViewState:
         self.count += 1
@@ -186,6 +204,14 @@ class Controller:
             for i, button in enumerate(self.game.table.buttons)
         ]
         target_button = button_target_for_action(self.game.table.buttons, decision_result.action)
+        opponent_profiles = [
+            (
+                f"{profile.name} {profile.action} "
+                f"loose={profile.looseness:.2f} aggro={profile.aggression:.2f}"
+                + (f" mem={profile.confidence:.2f}" if profile.confidence else "")
+            )
+            for profile in getattr(self.game.etat, "opponent_profiles", [])
+        ]
 
         return ControllerViewState(
             game_name=self.game_name,
@@ -205,6 +231,7 @@ class Controller:
             player_active=self.game.etat.players.nbr_player_active,
             buttons=buttons,
             target_button=target_button,
+            opponent_profiles=opponent_profiles,
             pot=round_sig(self.game.etat.pot),
             to_call=round_sig(self.game.etat.to_call),
             equity_table=round_sig(self.game.etat.chance_win),
