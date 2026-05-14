@@ -1,7 +1,9 @@
 """Tests for controller view state formatting."""
 from __future__ import annotations
 
-from objet.services.controller import ControllerViewState
+from types import SimpleNamespace
+
+from objet.services.controller import ControllerViewState, button_target_for_action
 
 
 def test_failed_scan_keeps_legacy_text_output() -> None:
@@ -39,3 +41,51 @@ def test_successful_view_state_contains_dashboard_fields() -> None:
     assert "Jeu: PMU" in text
     assert "Street: FLOP" in text
     assert "Decision -> Action: CALL" in text
+
+
+def test_call_targets_pay_button_with_coordinates() -> None:
+    buttons = [
+        _button("fold", enabled=True, bbox=(10, 20, 30, 40)),
+        _button("paie", enabled=True, bbox=(50, 60, 70, 80), text="paie 0.02", value=0.02),
+        _button("relance", enabled=True, bbox=(90, 100, 110, 120)),
+    ]
+
+    target = button_target_for_action(buttons, "CALL")
+
+    assert target == {
+        "index": 1,
+        "label": "B1",
+        "state": "paie",
+        "text": "paie 0.02",
+        "value": 0.02,
+        "bbox": [50, 60, 70, 80],
+    }
+
+
+def test_raise_targets_first_available_aggressive_button() -> None:
+    buttons = [
+        _button("mise", enabled=False, bbox=(1, 2, 3, 4)),
+        _button("mise", enabled=True, bbox=(5, 6, 7, 8)),
+        _button("all-in", enabled=True, bbox=(9, 10, 11, 12)),
+    ]
+
+    target = button_target_for_action(buttons, "RAISE")
+
+    assert target["state"] == "mise"
+    assert target["bbox"] == [5, 6, 7, 8]
+
+
+def test_wait_has_no_target_button() -> None:
+    buttons = [_button("check", enabled=True, bbox=(1, 2, 3, 4))]
+
+    assert button_target_for_action(buttons, "WAIT") is None
+
+
+def _button(state: str, *, enabled: bool, bbox, text: str = "", value: float = 0.0):
+    return SimpleNamespace(
+        etat=state,
+        enabled=enabled,
+        coordonate=bbox,
+        texte=text,
+        value=value,
+    )

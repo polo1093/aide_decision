@@ -38,6 +38,7 @@ class ControllerViewState:
     player_start: Optional[int] = None
     player_active: Optional[int] = None
     buttons: list[str] = field(default_factory=list)
+    target_button: Optional[dict[str, object]] = None
     pot: object = None
     to_call: object = None
     equity_table: object = None
@@ -93,6 +94,7 @@ class ControllerViewState:
             f"{'=' * 30}Metriques{'=' * 30}\n"
             f" {metrics}\n"
             f" {'  |  '.join(self.buttons)}\n"
+            f" Bouton cible: {self.target_button}\n"
             f"Decision -> {decision_line}\n"
         )
 
@@ -183,6 +185,7 @@ class Controller:
             else ""
             for i, button in enumerate(self.game.table.buttons)
         ]
+        target_button = button_target_for_action(self.game.table.buttons, decision_result.action)
 
         return ControllerViewState(
             game_name=self.game_name,
@@ -201,6 +204,7 @@ class Controller:
             player_start=self.game.etat.players.nbr_player_start,
             player_active=self.game.etat.players.nbr_player_active,
             buttons=buttons,
+            target_button=target_button,
             pot=round_sig(self.game.etat.pot),
             to_call=round_sig(self.game.etat.to_call),
             equity_table=round_sig(self.game.etat.chance_win),
@@ -214,7 +218,41 @@ class Controller:
         )
 
 
-__all__ = ["Controller", "ControllerViewState"]
+ACTION_BUTTON_STATES = {
+    "FOLD": ("fold",),
+    "CALL": ("paie",),
+    "CHECK": ("check",),
+    "RAISE": ("relance", "mise", "all-in"),
+}
+
+
+def button_target_for_action(buttons, action: str) -> Optional[dict[str, object]]:
+    expected_states = ACTION_BUTTON_STATES.get(action)
+    if not expected_states:
+        return None
+
+    expected = {state.lower() for state in expected_states}
+    for index, button in enumerate(buttons):
+        if not getattr(button, "enabled", False):
+            continue
+        state = str(getattr(button, "etat", "")).lower()
+        if state not in expected:
+            continue
+        bbox = getattr(button, "coordonate", None)
+        if not bbox:
+            continue
+        return {
+            "index": index,
+            "label": f"B{index}",
+            "state": state,
+            "text": getattr(button, "texte", ""),
+            "value": getattr(button, "value", 0.0),
+            "bbox": [int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])],
+        }
+    return None
+
+
+__all__ = ["Controller", "ControllerViewState", "button_target_for_action"]
 
 
 if __name__ == "__main__":

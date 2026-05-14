@@ -69,6 +69,7 @@ class TelemetryRecorder:
             "players": players,
             "players_by_name": players_by_name,
             "buttons": _list_value(getattr(view_state, "buttons", [])),
+            "target_button": getattr(view_state, "target_button", None),
             "metrics": {
                 "pot": getattr(view_state, "pot", None),
                 "to_call": getattr(view_state, "to_call", None),

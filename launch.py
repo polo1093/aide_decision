@@ -53,6 +53,7 @@ class App(tk.Tk):
         self._blink_after_id: Optional[str] = None
         self._blink_on = False
         self._base_decision_color = "#6c757d"
+        self._button_highlight_windows: list[tk.Toplevel] = []
 
         self.metric_vars: dict[str, tk.StringVar] = {}
         self.metric_value_labels: dict[str, tk.Label] = {}
@@ -347,6 +348,7 @@ class App(tk.Tk):
         self.var_notice.set("")
         self.var_players.set("")
         self.var_buttons.set("")
+        self._hide_button_highlight()
         self._set_text("")
 
     def _set_text(self, text: str) -> None:
@@ -538,6 +540,7 @@ class App(tk.Tk):
             logger.info("fin scan_continu last_ms=%s", _fmt_optional_float(self.last_call_ms))
         self.scanning = False
         self._stop_decision_blink()
+        self._hide_button_highlight()
 
     def snapshot_once(self) -> None:
         logger.info("debut snapshot")
@@ -616,6 +619,7 @@ class App(tk.Tk):
         players_header = f"Actifs: {_display_value(state.player_active)} / {_display_value(state.player_start)}"
         self.var_players.set(players_header + "\n" + "\n".join(state.players))
         self.var_buttons.set("\n".join(active_buttons) if active_buttons else "aucun bouton actif")
+        self._update_button_highlight(state.target_button)
         self._set_text(state.to_text())
 
     def _style_summary(self, action_available: bool) -> None:
@@ -640,6 +644,54 @@ class App(tk.Tk):
         _style_metric_label(self.metric_value_labels.get("Call max"), state.call_max, positive_good=True)
         _style_equity_label(self.metric_value_labels.get("Equity"), state.equity_table)
         _style_equity_label(self.metric_value_labels.get("Equity 1v1"), state.equity_1v1)
+
+    def _update_button_highlight(self, target_button: Optional[dict[str, object]]) -> None:
+        bbox = _target_button_bbox(target_button)
+        if bbox is None:
+            self._hide_button_highlight()
+            return
+        self._show_button_highlight(bbox)
+
+    def _show_button_highlight(self, bbox: tuple[int, int, int, int]) -> None:
+        x, y, width, height = bbox
+        if width <= 0 or height <= 0:
+            self._hide_button_highlight()
+            return
+
+        color = "#ffd400"
+        pad = 8
+        thickness = 5
+        segments = [
+            (x - pad, y - pad, width + 2 * pad, thickness),
+            (x - pad, y + height + pad - thickness, width + 2 * pad, thickness),
+            (x - pad, y - pad, thickness, height + 2 * pad),
+            (x + width + pad - thickness, y - pad, thickness, height + 2 * pad),
+        ]
+
+        windows = self._ensure_button_highlight_windows()
+        for window, (sx, sy, sw, sh) in zip(windows, segments):
+            window.configure(bg=color)
+            window.geometry(f"{max(1, sw)}x{max(1, sh)}+{int(sx)}+{int(sy)}")
+            window.deiconify()
+            window.lift()
+
+    def _ensure_button_highlight_windows(self) -> list[tk.Toplevel]:
+        if self._button_highlight_windows:
+            return self._button_highlight_windows
+
+        for _ in range(4):
+            window = tk.Toplevel(self)
+            window.withdraw()
+            window.overrideredirect(True)
+            window.configure(bg="#ffd400")
+            window.attributes("-topmost", True)
+            self._button_highlight_windows.append(window)
+        return self._button_highlight_windows
+
+    def _hide_button_highlight(self) -> None:
+        for window in self._button_highlight_windows:
+            if window.winfo_exists():
+                window.withdraw()
 
     def _set_decision_color(self, action: str, *, blink: bool = False) -> None:
         colors = {
@@ -904,6 +956,15 @@ def _display_card(value: object) -> str:
     if value is None:
         return "--"
     return str(value)
+
+
+def _target_button_bbox(target_button: Optional[dict[str, object]]) -> Optional[tuple[int, int, int, int]]:
+    if not target_button:
+        return None
+    bbox = target_button.get("bbox")
+    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+        return None
+    return tuple(int(value) for value in bbox)
 
 
 def _decision_explanation(action: str, reason: str) -> str:
