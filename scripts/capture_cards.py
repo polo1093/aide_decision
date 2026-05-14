@@ -147,7 +147,7 @@ def main_cards_validate(argv: Optional[list] = None) -> int:
     parser = argparse.ArgumentParser(description="Vérifie l'extraction + matching des cartes pour un jeu")
     parser.add_argument("--game", default="PMU")
     parser.add_argument("--game-dir")
-    parser.add_argument("--dump", action="store_true", help="Sauver extraits dans debug/")
+    parser.add_argument("--dump", action="store_true", help="Sauver extraits dans entrainement/cards/")
     parser.add_argument("--num-th", type=float, default=0.6, help="Seuil score pour numbers (0..1)")
     parser.add_argument("--suit-th", type=float, default=0.6, help="Seuil score pour suits (0..1)")
     parser.add_argument("--pad", type=int, default=4)
@@ -225,7 +225,7 @@ def main_cards_validate(argv: Optional[list] = None) -> int:
 
     # 4) Reconnaissance
     ok = True
-    debug_dir = auto["game_dir"] / "debug" / "cards"
+    training_dir = auto["game_dir"] / "entrainement" / "cards"
     for base_key, card_patch in pairs.items():
         patch_num = card_patch.number
         patch_suit = card_patch.suit
@@ -249,8 +249,8 @@ def main_cards_validate(argv: Optional[list] = None) -> int:
         status = "OK" if (hit_val and hit_suit) else "LOW"
         print(f"{base_key}: {status}  value={val} ({s_val:.3f})  suit={suit} ({s_suit:.3f})")
         if args.dump:
-            _save_png(debug_dir / f"{base_key}_number.png", patch_num)
-            _save_png(debug_dir / f"{base_key}_symbol.png", patch_suit)
+            _save_png(training_dir / f"{base_key}_number.png", patch_num)
+            _save_png(training_dir / f"{base_key}_symbol.png", patch_suit)
         if not (hit_val and hit_suit):
             ok = False
 

@@ -21,7 +21,7 @@ from objet.utils.calibration import load_coordinates
 
 
 def _auto_video(game_dir: Path) -> Optional[Path]:
-    base = game_dir / "debug" / "cards_video"
+    base = game_dir / "entrainement" / "cards_video"
     if base.is_file():
         return base
     if base.is_dir():
@@ -33,7 +33,7 @@ def _auto_video(game_dir: Path) -> Optional[Path]:
             if candidate.suffix.lower() in {".avi", ".mp4", ".mkv", ".mov"}:
                 return candidate
     for ext in (".avi", ".mp4", ".mkv", ".mov"):
-        candidate = game_dir / "debug" / f"cards_video{ext}"
+        candidate = game_dir / "entrainement" / f"cards_video{ext}"
         if candidate.exists():
             return candidate
     return None
@@ -86,7 +86,7 @@ def main(argv: Optional[list] = None) -> int:
     )
     parser.add_argument(
         "--video",
-        help="Explicit video path; default: game_dir/debug/cards_video/cards_video.*",
+        help="Explicit video path; default: game_dir/entrainement/cards_video/cards_video.*",
     )
     parser.add_argument(
         "--interval",
@@ -96,7 +96,7 @@ def main(argv: Optional[list] = None) -> int:
     )
     parser.add_argument(
         "--out",
-        help="Output directory (default: game_dir/debug/screens)",
+        help="Output directory (default: game_dir/entrainement/screens)",
     )
     parser.add_argument(
         "--log-level",
@@ -112,7 +112,7 @@ def main(argv: Optional[list] = None) -> int:
     logger = logging.getLogger("crop_video_frames")
 
     game_dir = Path(args.game_dir)
-    out_dir = _ensure_output_dir(Path(args.out) if args.out else (game_dir / "debug" / "screens"))
+    out_dir = _ensure_output_dir(Path(args.out) if args.out else (game_dir / "entrainement" / "screens"))
 
     regions, templates, table_capture = _load_table_capture(game_dir)
     game = Game.for_script(Path(__file__).name)
@@ -125,7 +125,7 @@ def main(argv: Optional[list] = None) -> int:
     video_path = Path(args.video) if args.video else _auto_video(game_dir)
     if not video_path or not video_path.exists():
         raise SystemExit(
-            f"ERROR: no video found. Put a file inside {game_dir/'debug'/'cards_video'} or pass --video"
+            f"ERROR: no video found. Put a file inside {game_dir/'entrainement'/'cards_video'} or pass --video"
         )
 
     logger.info("Using game_dir: %s", game_dir)

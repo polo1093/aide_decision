@@ -66,7 +66,7 @@ Dans l'interface, le menu **Outils** permet de lancer les étapes de calibration
 
 ## Workflow De Calibration
 
-Le profil `PMU` est stocké dans `config/PMU/`. Les coordonnées, templates et captures de debug y sont associés.
+Le profil `PMU` est stocké dans `config/PMU/`. Les coordonnées, templates et captures d'entrainement y sont associés.
 
 Pipeline rapide avec une vidéo OBS :
 

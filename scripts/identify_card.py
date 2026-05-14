@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """identify_card.py — labellisation incrémentale des cartes.
 
-Parcourt les captures plein écran dans ``config/<jeu>/debug/screens``, extrait les
+Parcourt les captures plein écran dans ``config/<jeu>/entrainement/screens``, extrait les
 patches *number* et *suit* selon `coordinates.json`, tente une reco par gabarits
 en mettant à jour le dataset **au fil de l'eau** :
 
@@ -15,7 +15,7 @@ Usage minimal:
     python scripts/identify_card.py --game PMU
 
 Options utiles:
-  --screens-dir   Dossier d’entrée (défaut: config/<jeu>/debug/screens)
+  --screens-dir   Dossier d’entrée (défaut: config/<jeu>/entrainement/screens)
   --strict        Score min (0-1) pour autoskip complet (def 0.985)
   --trim          Bordure rognée (px) pour reco & sauvegarde (def 6)
   --force-all     Forcer le dialog même si la reco est déjà suffisante
@@ -201,7 +201,7 @@ def main(argv: Sequence[str]) -> int:
         print(f"ERREUR: fichier de coordonnées introuvable ({coords_path})")
         return 2
 
-    screens_dir = Path(args.screens_dir) if args.screens_dir else game_dir / "debug" / "screens"
+    screens_dir = Path(args.screens_dir) if args.screens_dir else game_dir / "entrainement" / "screens"
     if not screens_dir.exists():
         print(f"ERREUR: dossier de captures introuvable ({screens_dir})")
         return 2

@@ -147,7 +147,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--game", default="PMU", help="Nom du jeu (dossier dans config/)")
     parser.add_argument("--config-root", help="Chemin vers le dossier config/ (défaut: auto)")
     parser.add_argument("--video", help="Vidéo utilisée pour le crop et la validation")
-    parser.add_argument("--screens-dir", help="Dossier de sortie des captures (défaut: config/<game>/debug/screens)")
+    parser.add_argument("--screens-dir", help="Dossier de sortie des captures (défaut: config/<game>/entrainement/screens)")
     parser.add_argument("--capture-interval", type=float, default=3.0, help="Intervalle (s) entre deux captures vidéo")
     parser.add_argument("--identify-threshold", type=float, default=0.92, help="Seuil reco acceptée")
     parser.add_argument("--identify-strict", type=float, default=0.985, help="Seuil autoskip strict")
@@ -174,7 +174,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"ERREUR: dossier du jeu introuvable ({game_dir})")
         return 2
 
-    screens_dir = Path(args.screens_dir).resolve() if args.screens_dir else (game_dir / "debug" / "screens")
+    screens_dir = Path(args.screens_dir).resolve() if args.screens_dir else (game_dir / "entrainement" / "screens")
 
     steps: List[Tuple[str, Callable[[], int]]] = []
     if not args.skip_zone_editor:

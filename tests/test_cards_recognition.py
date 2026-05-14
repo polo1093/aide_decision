@@ -19,13 +19,13 @@ from objet.scanner.cards_recognition import is_cover_me_cards
 
 
 def test_cover_overlay_is_detected() -> None:
-    """The debug cover image should be recognised as the overlay."""
+    """The training cover image should be recognised as the overlay."""
 
     cover_path = (
         Path(__file__).resolve().parents[1]
         / "config"
         / "PMU"
-        / "debug"
+        / "entrainement"
         / "cover.PNG"
     )
 
