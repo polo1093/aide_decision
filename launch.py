@@ -160,6 +160,14 @@ class App(tk.Tk):
 
         self.frm_side = ttk.Frame(self.main)
         self.frm_profile = ttk.LabelFrame(self.frm_side, text="Profil")
+        self.frm_tools = ttk.LabelFrame(self.frm_side, text="Outils")
+        self.tool_buttons = [
+            ttk.Button(self.frm_tools, text="Remapping", command=self._open_quick_setup_dialog),
+            ttk.Button(self.frm_tools, text="Zones", command=self._run_zone_editor),
+            ttk.Button(self.frm_tools, text="Frames video", command=self._run_capture_frames),
+            ttk.Button(self.frm_tools, text="Identifier", command=self._run_identify_cards),
+            ttk.Button(self.frm_tools, text="Valider video", command=self._run_validate_cards),
+        ]
         self.frm_players = ttk.LabelFrame(self.frm_side, text="Joueurs")
         self.var_players = tk.StringVar(value="")
         self.lbl_players = tk.Label(
@@ -310,8 +318,13 @@ class App(tk.Tk):
     def _layout_side(self) -> None:
         self.frm_side.grid_rowconfigure(1, weight=1)
         self.frm_profile.pack(side="top", fill="x", pady=(0, 8))
+        self.frm_tools.pack(side="top", fill="x", pady=(0, 8))
         self.frm_players.pack(side="top", fill="both", expand=True, pady=(0, 8))
         self.frm_buttons.pack(side="top", fill="x")
+        for index, button in enumerate(self.tool_buttons):
+            button.grid(row=index // 2, column=index % 2, sticky="ew", padx=8, pady=4)
+        self.frm_tools.grid_columnconfigure(0, weight=1)
+        self.frm_tools.grid_columnconfigure(1, weight=1)
         self.lbl_players.pack(side="top", anchor="w", padx=12, pady=10)
         self.lbl_buttons.pack(side="top", anchor="w", fill="x", padx=12, pady=10)
 
@@ -495,6 +508,7 @@ class App(tk.Tk):
             messagebox.showerror("Script introuvable", str(exc))
             return None
 
+        self.stop_scan()
         command = [sys.executable, str(script_path), *args]
         try:
             process = subprocess.Popen(
