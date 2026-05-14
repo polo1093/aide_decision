@@ -43,6 +43,7 @@ class Players:
         regions, templates_resolved, _ = load_coordinates(self.coord_path)
         if not self.player:
             self.player = [ Player(
+                coordonate_name=bbox_from_region(regions.get(f"player_name_J{i}")),
                 coordonate_money=bbox_from_region(regions.get(f"player_money_J{i}")),
                 coordonate_etat=bbox_from_region(regions.get(f"player_state_J{i}")),
                 ) for i in range(1,6)]
@@ -76,6 +77,8 @@ class Players:
 
 @dataclass
 class Player:
+    name: Optional[str] = None
+    coordonate_name: Optional[tuple[int, int, int, int]] = None
     coordonate_money: Optional[tuple[int, int, int, int]] = None
     coordonate_etat: Optional[tuple[int, int, int, int]] = None
     active_at_start: bool = True  # Indique si le joueur était actif au début de la main pas utiliser
@@ -114,6 +117,13 @@ class Player:
             self.refresh_fond(money)
         if self.fond_start_Party == 0:
             self.active_at_start = False
+
+    def apply_name_scan(self, name: Optional[str]) -> None:
+        if name is None:
+            return
+        cleaned = str(name).strip()
+        if cleaned:
+            self.name = cleaned
         
     def refresh_etat(self, etat: str, money: float) -> None:
         if etat == "No_start":

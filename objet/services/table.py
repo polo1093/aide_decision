@@ -105,13 +105,18 @@ class Table:
                 confidence_suit,
             )
         for index, player in enumerate(self.players.player, start=1):
+            name = None
+            if player.coordonate_name is not None and hasattr(self.scan, "scan_player_name"):
+                name = self.scan.scan_player_name(position_name=player.coordonate_name)
             etat , money = self.scan.scan_player(
                 position_money= player.fond.coordinates_value,
                 position_etat= player.coordonate_etat )
+            player.apply_name_scan(name)
             player.apply_scan(etat,money)
             LOGGER.debug(
-                "SCAN joueur index=%s etat=%s fond=%s active=%s",
+                "SCAN joueur index=%s name=%s etat=%s fond=%s active=%s",
                 index,
+                player.name,
                 etat,
                 money,
                 player.is_activate(),

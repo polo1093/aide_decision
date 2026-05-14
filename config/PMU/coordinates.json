@@ -34,6 +34,13 @@
       ],
       "type": "nombre"
     },
+    "player_name": {
+      "size": [
+        220,
+        32
+      ],
+      "type": "texte"
+    },
     "other_money": {
       "size": [
         110,
@@ -170,6 +177,51 @@
       ],
       "value": null,
       "label": "player_money_J5"
+    },
+    "player_name_J1": {
+      "group": "player_name",
+      "top_left": [
+        823,
+        882
+      ],
+      "value": null,
+      "label": "player_name_J1"
+    },
+    "player_name_J2": {
+      "group": "player_name",
+      "top_left": [
+        820,
+        433
+      ],
+      "value": null,
+      "label": "player_name_J2"
+    },
+    "player_name_J3": {
+      "group": "player_name",
+      "top_left": [
+        1170,
+        356
+      ],
+      "value": null,
+      "label": "player_name_J3"
+    },
+    "player_name_J4": {
+      "group": "player_name",
+      "top_left": [
+        1510,
+        433
+      ],
+      "value": null,
+      "label": "player_name_J4"
+    },
+    "player_name_J5": {
+      "group": "player_name",
+      "top_left": [
+        1510,
+        882
+      ],
+      "value": null,
+      "label": "player_name_J5"
     },
     "player_state_me": {
       "group": "player_state",

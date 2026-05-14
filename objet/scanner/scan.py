@@ -208,6 +208,16 @@ class ScanTable:
         value = self.scan_money( position_money)       
         return etat, value
 
+    def scan_player_name(self, position_name) -> Optional[str]:
+        if position_name is None:
+            return None
+
+        img = self._extract_patch(position_name)
+        texte, confidence = self.ocr.read_text(img, normalize_whitespace=False)
+        name = _clean_player_name(texte)
+        LOGGER.debug("SCAN ocr_player_name raw=%r confidence=%.3f name=%s", texte, confidence, name)
+        return name
+
     def scan_money(self, position) -> Optional[float]:
         img = self._extract_patch(position)
         value, confidence, raw_text = self.ocr.read_amount(img)
@@ -260,6 +270,13 @@ class ScanTable:
 
         img = self.screen_array[y0:y1, x0:x1].copy()
         return img
+
+
+def _clean_player_name(text: Optional[str]) -> Optional[str]:
+    if text is None:
+        return None
+    cleaned = " ".join(str(text).split()).strip()
+    return cleaned or None
 
 if __name__ == "__main__":
     scan = ScanTable()

@@ -98,7 +98,15 @@ class ControllerViewState:
 
 
 class Controller:
-    def __init__(self, *, game_name: str = "PMU", coord_path: Optional[Path | str] = None):
+    def __init__(
+        self,
+        *,
+        game_name: str = "PMU",
+        coord_path: Optional[Path | str] = None,
+        telemetry_dir: Optional[Path | str] = None,
+        telemetry_enabled: bool = True,
+        telemetry_recorder=None,
+    ):
         self.count = 0
         self.running = False
         self.cpt = 0
@@ -107,9 +115,19 @@ class Controller:
         self.coord_path = Path(coord_path) if coord_path is not None else Path("config") / game_name / "coordinates.json"
         from objet.services.decision import Decision
         from objet.services.game import Game
+        from objet.services.telemetry import DEFAULT_TELEMETRY_DIR, TelemetryRecorder
 
         self.game = Game(coord_path=self.coord_path)
         self.decision = Decision()
+        self.telemetry = (
+            telemetry_recorder
+            if telemetry_recorder is not None
+            else TelemetryRecorder(
+                root_dir=telemetry_dir if telemetry_dir is not None else DEFAULT_TELEMETRY_DIR,
+                game_name=game_name,
+                enabled=telemetry_enabled,
+            )
+        )
         self.last_view_state: Optional[ControllerViewState] = None
 
     def main(self) -> str:
@@ -122,6 +140,7 @@ class Controller:
             new_party = self.game.update_from_scan()
             result = self.game_stat_to_view_state(new_party)
             self.last_view_state = result
+            self.telemetry.record_cycle(game=self.game, view_state=result)
             if new_party:
                 self.game.ack_new_party()
             LOGGER.info(
@@ -153,7 +172,7 @@ class Controller:
 
         decision_result = self.decision.decide(self.game)
         player_scan = [
-            f"J{i + 1} {'active' if player.is_activate() else 'inactive'} : {player.fond}"
+            f"{getattr(player, 'name', None) or f'J{i + 1}'} {'active' if player.is_activate() else 'inactive'} : {player.fond}"
             for i, player in enumerate(self.game.table.players)
         ]
         buttons = [

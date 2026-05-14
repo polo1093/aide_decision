@@ -21,6 +21,11 @@ class EmptyScan:
         return None
 
 
+class PlayerNameScan(EmptyScan):
+    def scan_player_name(self, **_) -> str:
+        return "Alice"
+
+
 def test_empty_board_scan_clears_previous_card() -> None:
     table = Table()
     table.scan = EmptyScan()
@@ -32,3 +37,12 @@ def test_empty_board_scan_clears_previous_card() -> None:
 
     assert table.cards.board[0].formatted is None
     assert table.cards.board[0].poker_card is None
+
+
+def test_player_name_zone_updates_player_name() -> None:
+    table = Table()
+    table.scan = PlayerNameScan()
+
+    assert table.launch_scan() is True
+
+    assert table.players[0].name == "Alice"
