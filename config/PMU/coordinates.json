@@ -51,7 +51,7 @@
     "board_card_number": {
       "size": [
         50,
-        35
+        45
       ],
       "type": "carte_numero",
       "layout": {
@@ -75,7 +75,7 @@
       },
       "size": [
         50,
-        31
+        45
       ]
     },
     "player_card_symbol": {
