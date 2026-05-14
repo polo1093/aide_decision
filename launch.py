@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import subprocess
+import sys
 import time
 import tkinter as tk
-from tkinter import ttk
+from tkinter import filedialog, messagebox, ttk
 from typing import Optional
 
 from objet.services.controller import Controller, ControllerViewState
@@ -20,6 +22,14 @@ from objet.utils.logging_config import (
 
 
 logger = get_logger(__name__)
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+CONFIG_ROOT = PROJECT_ROOT / "config"
+SCRIPTS_ROOT = PROJECT_ROOT / "scripts"
+VIDEO_FILETYPES = (
+    ("Videos", "*.avi *.mp4 *.mkv *.mov"),
+    ("Tous les fichiers", "*.*"),
+)
 
 
 class App(tk.Tk):
@@ -50,6 +60,7 @@ class App(tk.Tk):
         self.profile_labels: list[tk.Label] = []
 
         self._build()
+        self._build_menu()
         self._layout()
         self._bind_keys()
         self._refresh_profile_status()
@@ -189,6 +200,23 @@ class App(tk.Tk):
         )
         self.scroll = ttk.Scrollbar(self.frm_debug, orient="vertical", command=self.txt.yview)
         self.txt.configure(yscrollcommand=self.scroll.set)
+
+    def _build_menu(self) -> None:
+        menubar = tk.Menu(self)
+
+        tools = tk.Menu(menubar, tearoff=False)
+        tools.add_command(
+            label="Nouveau jeu / remapping cartes...",
+            command=self._open_quick_setup_dialog,
+        )
+        tools.add_separator()
+        tools.add_command(label="Editer les zones", command=self._run_zone_editor)
+        tools.add_command(label="Decouper une video en images...", command=self._run_capture_frames)
+        tools.add_command(label="Identifier / labelliser les cartes", command=self._run_identify_cards)
+        tools.add_command(label="Valider le scan cartes sur video...", command=self._run_validate_cards)
+
+        menubar.add_cascade(label="Outils", menu=tools)
+        self.configure(menu=menubar)
 
     def _layout(self) -> None:
         self.frm_top.pack(side="top", fill="x", padx=10, pady=8)
@@ -330,7 +358,10 @@ class App(tk.Tk):
         self.stop_scan()
         logger.info("changement_jeu old=%s new=%s", self.game_name, selected)
         try:
-            self.controller = Controller(game_name=selected)
+            self.controller = Controller(
+                game_name=selected,
+                coord_path=CONFIG_ROOT / selected / "coordinates.json",
+            )
         except Exception as exc:
             self.var_game.set(self.game_name)
             self._handle_controller_exception(context=f"Changement jeu {selected}", error=exc)
@@ -342,6 +373,144 @@ class App(tk.Tk):
         self.var_perf.set("scan: --- ms | fps: ---")
         self._apply_empty_state()
         self._refresh_profile_status()
+
+    def _current_game_name(self) -> str:
+        return (self.var_game.get() or self.game_name or "PMU").strip()
+
+    def _open_quick_setup_dialog(self) -> None:
+        dialog = tk.Toplevel(self)
+        dialog.title("Remapping cartes")
+        dialog.transient(self)
+        dialog.resizable(False, False)
+
+        game_var = tk.StringVar(value=self._current_game_name())
+        video_var = tk.StringVar(value="")
+        edit_zones_var = tk.BooleanVar(value=True)
+        extract_frames_var = tk.BooleanVar(value=True)
+        identify_var = tk.BooleanVar(value=True)
+        validate_var = tk.BooleanVar(value=True)
+
+        body = ttk.Frame(dialog, padding=12)
+        body.grid(row=0, column=0, sticky="nsew")
+        body.grid_columnconfigure(1, weight=1)
+
+        ttk.Label(body, text="Jeu / profil").grid(row=0, column=0, sticky="w", pady=(0, 8))
+        game_combo = ttk.Combobox(body, width=28, textvariable=game_var, values=self.game_profiles)
+        game_combo.grid(row=0, column=1, columnspan=2, sticky="ew", pady=(0, 8))
+
+        ttk.Label(body, text="Video OBS").grid(row=1, column=0, sticky="w", pady=(0, 8))
+        video_entry = ttk.Entry(body, width=52, textvariable=video_var)
+        video_entry.grid(row=1, column=1, sticky="ew", pady=(0, 8))
+        ttk.Button(
+            body,
+            text="Parcourir",
+            command=lambda: self._browse_video_into(video_var),
+        ).grid(row=1, column=2, padx=(8, 0), pady=(0, 8))
+
+        ttk.Checkbutton(body, text="Editer les zones", variable=edit_zones_var).grid(row=2, column=0, columnspan=3, sticky="w")
+        ttk.Checkbutton(body, text="Decouper la video en images", variable=extract_frames_var).grid(row=3, column=0, columnspan=3, sticky="w")
+        ttk.Checkbutton(body, text="Identifier / labelliser les cartes", variable=identify_var).grid(row=4, column=0, columnspan=3, sticky="w")
+        ttk.Checkbutton(body, text="Valider la reconnaissance sur video", variable=validate_var).grid(row=5, column=0, columnspan=3, sticky="w", pady=(0, 10))
+
+        buttons = ttk.Frame(body)
+        buttons.grid(row=6, column=0, columnspan=3, sticky="e")
+        ttk.Button(buttons, text="Annuler", command=dialog.destroy).pack(side="right")
+
+        def run_setup() -> None:
+            game = game_var.get().strip()
+            if not game:
+                messagebox.showerror("Jeu manquant", "Indique un nom de jeu/profil.")
+                return
+
+            args = build_quick_setup_args(
+                game,
+                config_root=CONFIG_ROOT,
+                video=video_var.get().strip() or None,
+                edit_zones=edit_zones_var.get(),
+                extract_frames=extract_frames_var.get(),
+                identify_cards=identify_var.get(),
+                validate_video=validate_var.get(),
+            )
+
+            dialog.destroy()
+            self._launch_script("quick_setup.py", args, label=f"remapping {game}")
+
+        ttk.Button(buttons, text="Lancer", command=run_setup).pack(side="right", padx=(0, 8))
+
+        dialog.update_idletasks()
+        x = self.winfo_rootx() + max(0, (self.winfo_width() - dialog.winfo_width()) // 2)
+        y = self.winfo_rooty() + 80
+        dialog.geometry(f"+{x}+{y}")
+        dialog.grab_set()
+
+    def _browse_video_into(self, var: tk.StringVar) -> None:
+        selected = filedialog.askopenfilename(
+            title="Choisir la video",
+            filetypes=VIDEO_FILETYPES,
+        )
+        if selected:
+            var.set(selected)
+
+    def _run_zone_editor(self) -> None:
+        game = self._current_game_name()
+        self._launch_script("quick_setup.py", build_zone_editor_args(game), label=f"editeur zones {game}")
+
+    def _run_capture_frames(self) -> None:
+        game = self._current_game_name()
+        video = self._ask_video()
+        if not video:
+            return
+        self._launch_script(
+            "Crop_Video_Frames.py",
+            build_capture_frames_args(game, video),
+            label=f"decoupe video {game}",
+        )
+
+    def _run_identify_cards(self) -> None:
+        game = self._current_game_name()
+        self._launch_script("identify_card.py", build_identify_cards_args(game), label=f"identification cartes {game}")
+
+    def _run_validate_cards(self) -> None:
+        game = self._current_game_name()
+        video = self._ask_video()
+        if not video:
+            return
+        self._launch_script(
+            "capture_cards.py",
+            build_validate_cards_args(game, video),
+            label=f"validation cartes {game}",
+        )
+
+    def _ask_video(self) -> Optional[str]:
+        selected = filedialog.askopenfilename(
+            title="Choisir la video",
+            filetypes=VIDEO_FILETYPES,
+        )
+        return selected or None
+
+    def _launch_script(self, script_name: str, args: list[str], *, label: str) -> Optional[subprocess.Popen]:
+        try:
+            script_path = script_path_for(script_name)
+        except FileNotFoundError as exc:
+            messagebox.showerror("Script introuvable", str(exc))
+            return None
+
+        command = [sys.executable, str(script_path), *args]
+        try:
+            process = subprocess.Popen(
+                command,
+                cwd=str(PROJECT_ROOT),
+                creationflags=_subprocess_creation_flags(),
+            )
+        except Exception as exc:
+            logger.exception("erreur lancement_script script=%s args=%s", script_name, args)
+            messagebox.showerror("Lancement impossible", str(exc))
+            return None
+
+        logger.info("lancement_script label=%s pid=%s command=%s", label, process.pid, command)
+        self.var_notice.set(f"Outil lance: {label}")
+        self._set_text(f"Outil lance: {label}\nPID: {process.pid}\nCommande:\n{format_command(command)}")
+        return process
 
     def start_scan(self) -> None:
         self._update_interval()
@@ -534,7 +703,7 @@ class ProfileItem:
         self.detail = detail
 
 
-def profile_status(game_name: str, config_root: Path | str = "config") -> list[ProfileItem]:
+def profile_status(game_name: str, config_root: Path | str = CONFIG_ROOT) -> list[ProfileItem]:
     game_dir = Path(config_root) / game_name
     action_files = ["check.png", "paie.png", "relance.png", "fold.png", "sit_out.png", "play.png"]
     cards_dir = game_dir / "Cards"
@@ -575,7 +744,10 @@ def main(argv=None) -> None:
     configure_logging()
     with session_log("interface") as log_file:
         logger.info("debut interface interval_ms=%s log=%s", args.interval, log_path_value(log_file))
-        controller = Controller(game_name=args.game)
+        controller = Controller(
+            game_name=args.game,
+            coord_path=CONFIG_ROOT / args.game / "coordinates.json",
+        )
         if args.snapshot:
             try:
                 print(controller.main())
@@ -596,7 +768,7 @@ def main(argv=None) -> None:
         logger.info("fin interface status=closed log=%s", log_path_value(log_file))
 
 
-def available_game_names(config_root: Path | str = "config") -> list[str]:
+def available_game_names(config_root: Path | str = CONFIG_ROOT) -> list[str]:
     root = Path(config_root)
     if not root.exists():
         return ["PMU"]
@@ -606,6 +778,94 @@ def available_game_names(config_root: Path | str = "config") -> list[str]:
         if path.is_dir() and (path / "coordinates.json").exists()
     )
     return names or ["PMU"]
+
+
+def normalise_game_name(game_name: str) -> str:
+    game = str(game_name).strip()
+    if not game:
+        raise ValueError("game_name is required")
+    return game
+
+
+def build_quick_setup_args(
+    game_name: str,
+    *,
+    config_root: Path | str = CONFIG_ROOT,
+    video: Optional[str] = None,
+    edit_zones: bool = True,
+    extract_frames: bool = True,
+    identify_cards: bool = True,
+    validate_video: bool = True,
+) -> list[str]:
+    args = ["--game", normalise_game_name(game_name), "--config-root", str(Path(config_root))]
+    if video:
+        args += ["--video", str(video)]
+    if not edit_zones:
+        args.append("--skip-zone-editor")
+    if not extract_frames:
+        args.append("--skip-capture")
+    if not identify_cards:
+        args.append("--skip-identify")
+    if not validate_video:
+        args.append("--skip-capture-validation")
+    return args
+
+
+def build_zone_editor_args(game_name: str, *, config_root: Path | str = CONFIG_ROOT) -> list[str]:
+    return build_quick_setup_args(
+        game_name,
+        config_root=config_root,
+        extract_frames=False,
+        identify_cards=False,
+        validate_video=False,
+    )
+
+
+def build_capture_frames_args(
+    game_name: str,
+    video: str,
+    *,
+    config_root: Path | str = CONFIG_ROOT,
+) -> list[str]:
+    game_dir = Path(config_root) / normalise_game_name(game_name)
+    return ["--game-dir", str(game_dir), "--video", str(video)]
+
+
+def build_identify_cards_args(game_name: str) -> list[str]:
+    return ["--game", normalise_game_name(game_name)]
+
+
+def build_validate_cards_args(
+    game_name: str,
+    video: str,
+    *,
+    config_root: Path | str = CONFIG_ROOT,
+) -> list[str]:
+    game = normalise_game_name(game_name)
+    game_dir = Path(config_root) / game
+    return ["--game", game, "--game-dir", str(game_dir), "--video", str(video)]
+
+
+def script_path_for(script_name: str) -> Path:
+    path = SCRIPTS_ROOT / script_name
+    if not path.is_file():
+        raise FileNotFoundError(f"{path} n'existe pas.")
+    return path
+
+
+def _subprocess_creation_flags() -> int:
+    return getattr(subprocess, "CREATE_NEW_CONSOLE", 0) if sys.platform.startswith("win") else 0
+
+
+def format_command(command: list[str]) -> str:
+    return " ".join(_quote_command_part(part) for part in command)
+
+
+def _quote_command_part(part: str) -> str:
+    text = str(part)
+    if any(char.isspace() for char in text):
+        return f'"{text}"'
+    return text
 
 
 def _fmt_optional_float(value: Optional[float]) -> str:
