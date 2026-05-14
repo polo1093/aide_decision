@@ -143,7 +143,7 @@ def _run_capture_video(
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Assistant de configuration rapide (zones → captures → cartes → validation)")
+    parser = argparse.ArgumentParser(description="Assistant de configuration rapide (zones -> captures -> cartes -> validation)")
     parser.add_argument("--game", default="PMU", help="Nom du jeu (dossier dans config/)")
     parser.add_argument("--config-root", help="Chemin vers le dossier config/ (défaut: auto)")
     parser.add_argument("--video", help="Vidéo utilisée pour le crop et la validation")
@@ -299,5 +299,4 @@ def _report_missing_cards(game_dir: Path) -> None:
 
 
 if __name__ == "__main__":
-    _report_missing_cards(PROJECT_ROOT / "config" / "PMU")
     raise SystemExit(main())
