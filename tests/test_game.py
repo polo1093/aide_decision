@@ -214,7 +214,30 @@ def test_partial_flop_scan_does_not_update_stable_board_or_crash() -> None:
         None,
         None,
     ]
-    assert game.etat.chance_win_0 is not None
+    assert game.etat.chance_win_0 is None
+    assert game.etat.chance_win is None
+
+
+def test_duplicate_known_cards_skip_calculation_without_pokereval_crash() -> None:
+    game = Game()
+    game.etat.monte_carlo_simulations = 50
+
+    scanned = CardsState()
+    scanned.me[0].apply_observation("9", "hearts")
+    scanned.me[1].apply_observation("A", "hearts")
+    scanned.board[0].apply_observation("J", "hearts")
+    scanned.board[1].apply_observation("J", "clubs")
+    scanned.board[2].apply_observation("J", "diamonds")
+    scanned.board[3].apply_observation("9", "hearts")
+
+    game.etat.update(
+        cards_state=scanned,
+        players=game.table.players,
+        pot=0.22,
+    )
+
+    assert game.etat.chance_win_0 is None
+    assert game.etat.chance_win is None
 
 
 def test_monte_carlo_equity_uses_multiple_opponents() -> None:

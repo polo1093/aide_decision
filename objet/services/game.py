@@ -28,6 +28,7 @@ from objet.services.script_state import SCRIPT_STATE_USAGE, StatePortion
 LOGGER = get_logger(__name__)
 DEFAULT_MONTE_CARLO_SIMULATIONS = 2000
 DEFAULT_TO_CALL = 0.02
+VALID_BOARD_COUNTS = (0, 3, 4, 5)
 
 GAME_STREET_ORDER = {
     "IDLE": 0,
@@ -81,7 +82,15 @@ class Etat:
     
    
 
-    def _cal_win_chances(self) -> float:
+    def _clear_calculation(self) -> None:
+        self.chance_win_0 = None
+        self.chance_win = None
+        self.equity_required = None
+        self.montant_a_jouer = None
+        self.ev = None
+        self.Call_max = None
+
+    def _cal_win_chances(self) -> Optional[float]:
         """Calcule les chances de gain en fonction des cartes connues."""
 
         me_cards = self.cards.me_cards()
@@ -93,13 +102,38 @@ class Etat:
 
         board_cards = [card for card in self.cards.board_cards() if card.formatted]
         board_length = len(board_cards)
-        if board_length not in (0, 3, 4, 5):
-            raise ValueError("Le nombre de cartes sur le board est incorrect.")
+        if board_length not in VALID_BOARD_COUNTS:
+            LOGGER.warning(
+                "SKIP calcul raison=nombre_cartes_board_incoherent count=%s board=%s",
+                board_length,
+                [card.formatted for card in self.cards.board_cards()],
+            )
+            self._clear_calculation()
+            return None
 
         board_poker_cards = [
             card.poker_card
             for idx, card in enumerate(board_cards)
         ]
+        if any(card is None for card in board_poker_cards):
+            LOGGER.warning(
+                "SKIP calcul raison=carte_board_invalide board=%s",
+                [card.formatted for card in self.cards.board_cards()],
+            )
+            self._clear_calculation()
+            return None
+
+        duplicate_cards = _duplicate_cards([*hero_cards, *board_poker_cards])
+        if duplicate_cards:
+            LOGGER.warning(
+                "SKIP calcul raison=cartes_dupliquees cartes=%s hero=%s board=%s",
+                duplicate_cards,
+                [card.formatted for card in me_cards],
+                [card.formatted for card in board_cards],
+            )
+            self._clear_calculation()
+            return None
+
         self.chance_win_0 = HandEvaluator.evaluate_hand(hero_cards, board_poker_cards)
         opponent_count = max(0, self.players.nbr_player_active)
         self.chance_win = _monte_carlo_equity(
@@ -144,7 +178,8 @@ class Etat:
     
     def _cal(self):
         if self.cards.is_ready_for_cal() and self.pot is not None:
-            self._cal_win_chances()
+            if self._cal_win_chances() is None:
+                return
             self.ev = self._cal_EV()
             self._cal_max_call()
             self._cal_equity_required()
@@ -193,11 +228,12 @@ class Etat:
         self.players.cal_nbr_player_active()
 
 
-    def update_cards_state(self, cards_state: CardsState) -> None:
+    def update_cards_state(self, cards_state: CardsState) -> bool:
         """Met à jour l'état des cartes."""
         nbr_scan = 3 *2
         board_count = sum(1 for card in cards_state.board if card.formatted)
-        if board_count in (0, 3, 4, 5):
+        board_is_coherent = board_count in VALID_BOARD_COUNTS
+        if board_is_coherent:
             for i,card in enumerate(cards_state.board):
                 if self.cards.board[i].formatted is None:
                     self.cards.board[i] = card
@@ -209,7 +245,7 @@ class Etat:
                             self.cards.board[i] = card
                             self.cards_change = 0
         else:
-            LOGGER.debug(
+            LOGGER.warning(
                 "SKIP update board raison=nombre_cartes_incoherent count=%s board=%s",
                 board_count,
                 [card.formatted for card in cards_state.board],
@@ -227,12 +263,21 @@ class Etat:
                         self.cards.me[i] = card
                         self.cards_change = 0
         self.cards_change -=1
+        return board_is_coherent
 
     def update(self, *, cards_state: CardsState, players: Players, pot: Optional[float], to_call: Optional[float] = None) -> None:
-        self.update_cards_state(cards_state)
+        cards_are_coherent = self.update_cards_state(cards_state)
         self.update_players(players)
         self.pot = pot if pot else self.pot
         self.to_call = DEFAULT_TO_CALL if to_call is None else max(0.0, to_call)
+        if not cards_are_coherent:
+            self._clear_calculation()
+            LOGGER.warning(
+                "SKIP calcul raison=scan_board_incoherent count=%s board=%s",
+                sum(1 for card in cards_state.board if card.formatted),
+                [card.formatted for card in cards_state.board],
+            )
+            return
         self._cal()
 
 
@@ -597,6 +642,20 @@ def _monte_carlo_equity(
         equity_total += 1.0 / (tied_opponents + 1)
 
     return equity_total / runs
+
+
+def _duplicate_cards(cards: Sequence[Optional[PokerEvalCard]]) -> list[str]:
+    seen: set[tuple[int, int]] = set()
+    duplicates: list[str] = []
+    for card in cards:
+        if card is None:
+            continue
+        key = (card.rank, card.suit)
+        if key in seen:
+            duplicates.append(f"{card.rank}:{card.suit}")
+            continue
+        seen.add(key)
+    return duplicates
 
 
 def _equity_seed(
