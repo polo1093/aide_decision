@@ -26,6 +26,18 @@ if not hasattr(Image, "ANTIALIAS"):
 PatchType = Union[np.ndarray, Image.Image]
 
 
+def _patch_bidi_get_display() -> None:
+    """Expose bidi.get_display for EasyOCR when python-bidi keeps it in bidi.algorithm."""
+    try:
+        import bidi
+        from bidi.algorithm import get_display
+    except Exception:
+        return
+
+    if not hasattr(bidi, "get_display"):
+        bidi.get_display = get_display  # type: ignore[attr-defined]
+
+
 def _normalize_whitespace(text: str) -> str:
     """Collapse multiple whitespace characters into a single space."""
     return re.sub(r"\s+", " ", text).strip().lower()
@@ -61,12 +73,13 @@ class OcrEngine:
         if self._reader is not None:
             return
 
+        _patch_bidi_get_display()
         import easyocr  # import différé pour ne pas charger EasyOCR inutilement
 
         langs = [self.lang]
         if "en" not in langs:
             langs.append("en")
-        self._reader = easyocr.Reader(langs)
+        self._reader = easyocr.Reader(langs, verbose=False)
 
     def _to_pil(self, patch: PatchType) -> Image.Image:
         """Convert any supported input (np.ndarray BGR or PIL.Image) to a PIL RGB image."""
