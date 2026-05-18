@@ -15,12 +15,14 @@ from launch import (
     build_zone_editor_args,
     format_command,
     load_interface_state,
+    needs_card_identification,
     normalise_game_name,
     profile_status,
     save_interface_state,
     select_initial_game,
     script_path_for,
 )
+from objet.services.controller import ControllerViewState
 
 
 def test_available_game_names_lists_profiles_with_coordinates(tmp_path: Path) -> None:
@@ -174,3 +176,63 @@ def test_interface_launch_command_is_raw_off_windows(monkeypatch: pytest.MonkeyP
     command = ["python", "tool.py"]
 
     assert build_interface_launch_command(command) is command
+
+
+def test_needs_card_identification_for_partial_hero_preflop() -> None:
+    state = ControllerViewState(
+        game_name="PokerTH",
+        scan_count=1,
+        scan_ok=True,
+        scan_failures=0,
+        street="PREFLOP",
+        hero_scan=["Q♥", None],
+        board_scan=[None, None, None, None, None],
+        buttons=["B0 relance :20.0", "B1 check"],
+    )
+
+    assert needs_card_identification(state) is True
+
+
+def test_needs_card_identification_for_partial_hero_idle_with_buttons() -> None:
+    state = ControllerViewState(
+        game_name="PokerTH",
+        scan_count=1,
+        scan_ok=True,
+        scan_failures=0,
+        street="IDLE",
+        hero_scan=["Q♥", None],
+        board_scan=[None, None, None, None, None],
+        buttons=["B0 relance :820.0", "B1 check", "B2 fold"],
+    )
+
+    assert needs_card_identification(state) is True
+
+
+def test_needs_card_identification_ignores_empty_idle_table() -> None:
+    state = ControllerViewState(
+        game_name="PokerTH",
+        scan_count=1,
+        scan_ok=True,
+        scan_failures=0,
+        street="IDLE",
+        hero_scan=[None, None],
+        board_scan=[None, None, None, None, None],
+        buttons=[],
+    )
+
+    assert needs_card_identification(state) is False
+
+
+def test_needs_card_identification_for_partial_flop_board() -> None:
+    state = ControllerViewState(
+        game_name="PokerTH",
+        scan_count=1,
+        scan_ok=True,
+        scan_failures=0,
+        street="FLOP",
+        hero_scan=["A♠", "K♥"],
+        board_scan=["2♣", None, "9♦", None, None],
+        buttons=[],
+    )
+
+    assert needs_card_identification(state) is True

@@ -33,6 +33,7 @@ SCRIPTS_ROOT = PROJECT_ROOT / "scripts"
 INTERFACE_STATE_PATH = CONFIG_ROOT / "_interface_state.json"
 DEFAULT_GAME_NAME = "PMU"
 DEFAULT_WINDOW_GEOMETRY = "1080x760"
+AUTO_IDENTIFY_COOLDOWN_SECONDS = 5.0
 VIDEO_FILETYPES = (
     ("Videos", "*.avi *.mp4 *.mkv *.mov"),
     ("Tous les fichiers", "*.*"),
@@ -66,6 +67,8 @@ class App(tk.Tk):
         self._scan_result_queue: "queue.Queue[tuple[str, object, float]]" = queue.Queue()
         self._scan_poll_after_id: Optional[str] = None
         self._tool_processes: dict[str, subprocess.Popen] = {}
+        self._last_auto_identify_t = 0.0
+        self._tools_window: Optional[tk.Toplevel] = None
 
         self.last_call_ms: Optional[float] = None
         self.fps: Optional[float] = None
@@ -78,6 +81,7 @@ class App(tk.Tk):
         self.metric_value_labels: dict[str, tk.Label] = {}
         self.summary_value_labels: dict[str, tk.Label] = {}
         self.profile_labels: list[tk.Label] = []
+        self.var_auto_identify_cards = tk.BooleanVar(value=False)
 
         self._build()
         self._build_menu()
@@ -183,15 +187,7 @@ class App(tk.Tk):
 
         self.frm_side = ttk.Frame(self.main)
         self.frm_profile = ttk.LabelFrame(self.frm_side, text="Profil")
-        self.frm_tools = ttk.LabelFrame(self.frm_side, text="Outils")
-        self.tool_buttons = [
-            ttk.Button(self.frm_tools, text="Remapping", command=self._open_quick_setup_dialog),
-            ttk.Button(self.frm_tools, text="Zones", command=self._run_zone_editor),
-            ttk.Button(self.frm_tools, text="Frames video", command=self._run_capture_frames),
-            ttk.Button(self.frm_tools, text="Identifier", command=self._run_identify_cards),
-            ttk.Button(self.frm_tools, text="Valider video", command=self._run_validate_cards),
-            ttk.Button(self.frm_tools, text="Clean histo", command=self._clear_player_history),
-        ]
+        self.btn_tools = ttk.Button(self.frm_side, text="Outils", command=self._open_tools_window)
         self.frm_players = ttk.LabelFrame(self.frm_side, text="Joueurs")
         self.var_players = tk.StringVar(value="")
         self.lbl_players = tk.Label(
@@ -237,6 +233,11 @@ class App(tk.Tk):
         menubar = tk.Menu(self)
 
         tools = tk.Menu(menubar, tearoff=False)
+        tools.add_command(
+            label="Ouvrir la fenetre outils",
+            command=self._open_tools_window,
+        )
+        tools.add_separator()
         tools.add_command(
             label="Nouveau jeu / remapping cartes...",
             command=self._open_quick_setup_dialog,
@@ -344,13 +345,9 @@ class App(tk.Tk):
     def _layout_side(self) -> None:
         self.frm_side.grid_rowconfigure(1, weight=1)
         self.frm_profile.pack(side="top", fill="x", pady=(0, 8))
-        self.frm_tools.pack(side="top", fill="x", pady=(0, 8))
+        self.btn_tools.pack(side="top", fill="x", pady=(0, 8))
         self.frm_players.pack(side="top", fill="both", expand=True, pady=(0, 8))
         self.frm_buttons.pack(side="top", fill="x")
-        for index, button in enumerate(self.tool_buttons):
-            button.grid(row=index // 2, column=index % 2, sticky="ew", padx=8, pady=4)
-        self.frm_tools.grid_columnconfigure(0, weight=1)
-        self.frm_tools.grid_columnconfigure(1, weight=1)
         self.lbl_players.pack(side="top", anchor="w", padx=12, pady=10)
         self.lbl_buttons.pack(side="top", anchor="w", fill="x", padx=12, pady=10)
 
@@ -414,6 +411,7 @@ class App(tk.Tk):
         self._apply_empty_state()
         self._refresh_profile_status()
         self._save_interface_state()
+        self._last_auto_identify_t = 0.0
 
     def _on_close(self) -> None:
         self.stop_scan()
@@ -431,6 +429,68 @@ class App(tk.Tk):
 
     def _current_game_name(self) -> str:
         return (self.var_game.get() or self.game_name or DEFAULT_GAME_NAME).strip()
+
+    def _open_tools_window(self) -> None:
+        if self._tools_window is not None and self._tools_window.winfo_exists():
+            self._tools_window.lift()
+            self._tools_window.focus_force()
+            return
+
+        window = tk.Toplevel(self)
+        self._tools_window = window
+        window.title("Outils")
+        window.transient(self)
+        window.resizable(False, False)
+
+        def close_window() -> None:
+            self._tools_window = None
+            window.destroy()
+
+        window.protocol("WM_DELETE_WINDOW", close_window)
+
+        body = ttk.Frame(window, padding=12)
+        body.grid(row=0, column=0, sticky="nsew")
+        body.grid_columnconfigure(0, weight=1)
+        body.grid_columnconfigure(1, weight=1)
+
+        tool_actions = [
+            ("Remapping", self._open_quick_setup_dialog),
+            ("Zones", self._run_zone_editor),
+            ("Frames video", self._run_capture_frames),
+            ("Identifier", self._run_identify_cards),
+            ("Valider video", self._run_validate_cards),
+            ("Clean histo", self._clear_player_history),
+        ]
+        for index, (label, command) in enumerate(tool_actions):
+            ttk.Button(body, text=label, command=command).grid(
+                row=index // 2,
+                column=index % 2,
+                sticky="ew",
+                padx=6,
+                pady=4,
+            )
+
+        option_row = (len(tool_actions) + 1) // 2
+        ttk.Checkbutton(
+            body,
+            text="Auto cartes inconnues (5s)",
+            variable=self.var_auto_identify_cards,
+        ).grid(row=option_row, column=0, columnspan=2, sticky="w", padx=6, pady=(10, 8))
+
+        ttk.Button(body, text="Fermer", command=close_window).grid(
+            row=option_row + 1,
+            column=1,
+            sticky="e",
+            padx=6,
+            pady=(4, 0),
+        )
+
+        window.update_idletasks()
+        x = self.winfo_rootx() + max(0, (self.winfo_width() - window.winfo_width()) // 2)
+        y = self.winfo_rooty() + 120
+        window.geometry(f"+{x}+{y}")
+        window.lift()
+        window.focus_force()
 
     def _open_quick_setup_dialog(self) -> None:
         dialog = tk.Toplevel(self)
@@ -522,8 +582,19 @@ class App(tk.Tk):
         )
 
     def _run_identify_cards(self) -> None:
+        self._launch_identify_cards(auto=False)
+
+    def _launch_identify_cards(self, *, auto: bool) -> Optional[subprocess.Popen]:
         game = self._current_game_name()
-        self._launch_script("identify_card.py", build_identify_cards_args(game), label=f"identification cartes {game}")
+        label = f"identification cartes {game}"
+        if auto:
+            label = f"auto {label}"
+        return self._launch_script(
+            "identify_card.py",
+            build_identify_cards_args(game),
+            label=label,
+            stop_scan=not auto,
+        )
 
     def _run_validate_cards(self) -> None:
         game = self._current_game_name()
@@ -563,14 +634,22 @@ class App(tk.Tk):
         )
         return selected or None
 
-    def _launch_script(self, script_name: str, args: list[str], *, label: str) -> Optional[subprocess.Popen]:
+    def _launch_script(
+        self,
+        script_name: str,
+        args: list[str],
+        *,
+        label: str,
+        stop_scan: bool = True,
+    ) -> Optional[subprocess.Popen]:
         try:
             script_path = script_path_for(script_name)
         except FileNotFoundError as exc:
             messagebox.showerror("Script introuvable", str(exc))
             return None
 
-        self.stop_scan()
+        if stop_scan:
+            self.stop_scan()
         command = [sys.executable, str(script_path), *args]
         process_key = format_command(command)
         existing = self._tool_processes.get(process_key)
@@ -708,8 +787,49 @@ class App(tk.Tk):
         self._last_tick_t = now
 
         self._apply_view_state(state)
+        self._maybe_auto_identify_cards(state)
         fps_txt = f"{self.fps:.1f}" if self.fps else "---"
         self.var_perf.set(f"scan: {dt_ms:.1f} ms | fps: {fps_txt}")
+
+    def _maybe_auto_identify_cards(self, state: ControllerViewState) -> None:
+        if not self.var_auto_identify_cards.get():
+            return
+        if not needs_card_identification(state):
+            return
+
+        now = time.monotonic()
+        elapsed = now - self._last_auto_identify_t
+        if elapsed < AUTO_IDENTIFY_COOLDOWN_SECONDS:
+            logger.debug(
+                "SKIP auto_identification_cartes raison=cooldown elapsed=%.2f",
+                elapsed,
+            )
+            return
+
+        game = self._current_game_name()
+        args = build_identify_cards_args(game)
+        if self._is_tool_running("identify_card.py", args):
+            logger.debug("SKIP auto_identification_cartes raison=outil_deja_ouvert game=%s", game)
+            return
+
+        self._last_auto_identify_t = now
+        logger.info("auto_identification_cartes declenchee game=%s", game)
+        self._launch_identify_cards(auto=True)
+
+    def _is_tool_running(self, script_name: str, args: list[str]) -> bool:
+        try:
+            script_path = script_path_for(script_name)
+        except FileNotFoundError:
+            return False
+        command = [sys.executable, str(script_path), *args]
+        process_key = format_command(command)
+        existing = self._tool_processes.get(process_key)
+        if existing is None:
+            return False
+        if existing.poll() is None:
+            return True
+        self._tool_processes.pop(process_key, None)
+        return False
 
     def _run_controller(self, *, context: str) -> tuple[ControllerViewState, float]:
         t0 = time.perf_counter()
@@ -1055,6 +1175,37 @@ def select_initial_game(cli_game: Optional[str], state: dict[str, object], profi
         if game and game in profiles:
             return game
     return DEFAULT_GAME_NAME
+
+
+def needs_card_identification(state: ControllerViewState) -> bool:
+    if not state.scan_ok:
+        return False
+
+    active_buttons = bool([button for button in state.buttons if button])
+    street = str(state.street or "").upper()
+    hero_cards = _pad_list(state.hero_state or state.hero_scan, 2)
+    hero_known = _count_known_cards(hero_cards)
+    if hero_known < 2 and active_buttons:
+        return True
+    if street != "IDLE" and hero_known < 2 and hero_known > 0:
+        return True
+
+    expected_board_count = {
+        "FLOP": 3,
+        "TURN": 4,
+        "RIVER": 5,
+    }.get(street, 0)
+    if expected_board_count:
+        board_cards = _pad_list(state.board_state or state.board_scan, 5)[:expected_board_count]
+        board_known = _count_known_cards(board_cards)
+        if board_known < expected_board_count and (board_known > 0 or active_buttons):
+            return True
+
+    return False
+
+
+def _count_known_cards(values: list[object]) -> int:
+    return sum(1 for value in values if value not in (None, "", "--"))
 
 
 def _state_text(state: dict[str, object], key: str) -> Optional[str]:
