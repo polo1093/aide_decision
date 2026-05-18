@@ -80,6 +80,7 @@ class ZoneProject:
         """Retourne une capture plausible pour *folder* (full screen/table)."""
 
         prefer_bases = [
+            "example_full_screen",
             "test_screen",
             "test_fullscreen",
             "test_table",
@@ -99,6 +100,13 @@ class ZoneProject:
                 lower = name.lower()
                 if any(lower.endswith(ext) for ext in exts):
                     yield name, lower
+
+        screens_dir = os.path.join(folder, "entrainement", "screens")
+        if os.path.isdir(screens_dir):
+            for name in sorted(os.listdir(screens_dir)):
+                lower = name.lower()
+                if any(lower.endswith(ext) for ext in exts):
+                    return os.path.join(screens_dir, name)
 
         # 1er passage : évite les "anchor"/"crop" si possible
         for name, lower in _iter_image_files():
@@ -257,11 +265,17 @@ class ZoneProject:
                 group = r.get("group", "")
                 # *** PAS DE VALEUR PAR DÉFAUT ***
                 tl = r["top_left"]
+                meta = {
+                    meta_key: meta_value
+                    for meta_key, meta_value in r.items()
+                    if meta_key not in {"group", "top_left", "value", "label"}
+                }
                 self.regions[key] = {
                     "group": group,
                     "top_left": [coerce_int(tl[0]), coerce_int(tl[1])],
                     "value": r.get("value"),
                     "label": r.get("label", key),
+                    **meta,
                 }
             # IMPORTANT : plus de _clamp_all() ici → on respecte le JSON
         else:
@@ -388,6 +402,9 @@ class ZoneProject:
                 "value": r.get("value", None),
                 "label": r.get("label", key),
             }
+            for meta_key, meta_value in r.items():
+                if meta_key not in {"group", "top_left", "value", "label"}:
+                    out["regions"][key][meta_key] = meta_value
         return out
 
     def save_to(self, path: str) -> None:

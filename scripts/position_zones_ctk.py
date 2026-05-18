@@ -223,13 +223,11 @@ class ZoneEditorCTK:
         # Charge la config du jeu (regions, templates, etc.)
         self.project.load_game(base, game_name)
 
-        # Force l'image sur config/<jeu>/example_full_screen.png (si ça manque, ça plante, c'est voulu)
-        game_dir = Path(base) / game_name
-        candidate = game_dir / DEFAULT_IMAGE_NAME
+        if not self.project.image_path:
+            raise FileNotFoundError(f"Image introuvable pour {game_name}")
 
-        img = Image.open(candidate).convert("RGB")
+        img = Image.open(self.project.image_path).convert("RGB")
         self.project.image = img
-        self.project.image_path = str(candidate)
 
         # Alignement + rendu
         self._startup_align_groups()

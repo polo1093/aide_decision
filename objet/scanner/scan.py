@@ -1,5 +1,5 @@
 
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import cv2
 import numpy as np
@@ -13,7 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
     
 import pyautogui
 from objet.utils.pyauto import locate_in_image
-from objet.utils.calibration import bbox_from_region, load_coordinates
+from objet.utils.calibration import bbox_from_region, load_coordinates, table_capture_origin
 from objet.utils.logging_config import get_logger
 from objet.scanner.cards_recognition import (
     TemplateIndex,
@@ -67,7 +67,11 @@ class ScanTable:
         self.template_index = TemplateIndex(self.cards_root)
         self.template_index.load()
         
-        regions, _, _ = load_coordinates(self.coord_path)
+        regions, _, table_capture = load_coordinates(self.coord_path)
+        self.table_capture = table_capture
+        self.capture_origin = table_capture_origin(table_capture)
+        self.reference_offset = _pair_from_mapping(table_capture.get("ref_offset"))
+        self.runtime_region_offset: Tuple[int, int] = (0, 0)
         self.player_state_boxes = bbox_from_region(regions.get("player_state_me"))
         self.ocr =  OcrEngine()
 
@@ -93,6 +97,7 @@ class ScanTable:
         rgb = np.array(grab)                  # numpy RGB
         self.screen_array = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)  # numpy BGR
         self.anchor_box = None
+        self.runtime_region_offset = (0, 0)
 
     # ------------------------------------------------------------------
     # Localisation de la table via pyautogui
@@ -107,6 +112,7 @@ class ScanTable:
         if self.screen_array is None:
             self.scan_string = "no_screen"
             self.anchor_box = None
+            self.runtime_region_offset = (0, 0)
             LOGGER.warning("SKIP recherche_table raison=no_screen")
             return False
 
@@ -122,14 +128,44 @@ class ScanTable:
         except pyautogui.ImageNotFoundException:
             self.scan_string = "don't find"
             self.anchor_box = None
+            self.runtime_region_offset = (0, 0)
+            LOGGER.warning("SKIP recherche_table raison=anchor_introuvable confidence=%s", confidence)
+            return False
+        if box is None:
+            self.scan_string = "don't find"
+            self.anchor_box = None
+            self.runtime_region_offset = (0, 0)
             LOGGER.warning("SKIP recherche_table raison=anchor_introuvable confidence=%s", confidence)
             return False
 
         anchor_left, anchor_top, anchor_w, anchor_h = box
         self.anchor_box = (int(anchor_left), int(anchor_top), int(anchor_w), int(anchor_h))
+        self._update_runtime_region_offset()
         self.scan_string = "ok"
         LOGGER.debug("SCAN table anchor=%s", self.anchor_box)
         return True
+
+    def _update_runtime_region_offset(self) -> None:
+        """Recale les zones absolues du profil sur la position actuelle de l'ancre."""
+
+        self.runtime_region_offset = (0, 0)
+        if not self.table_capture.get("enabled", True):
+            return
+        if self.anchor_box is None or self.reference_offset is None:
+            return
+
+        ref_x, ref_y = self.reference_offset
+        live_origin = (int(self.anchor_box[0]) - ref_x, int(self.anchor_box[1]) - ref_y)
+        self.runtime_region_offset = (
+            live_origin[0] - int(self.capture_origin[0]),
+            live_origin[1] - int(self.capture_origin[1]),
+        )
+        LOGGER.debug(
+            "SCAN recale_zones origin_ref=%s origin_live=%s offset=%s",
+            self.capture_origin,
+            live_origin,
+            self.runtime_region_offset,
+        )
 
     # ------------------------------------------------------------------
     # Scan des cartes directement sur la capture plein écran
@@ -250,6 +286,9 @@ class ScanTable:
             return np.empty((0, 0), dtype=np.uint8)
 
         x, y, w, h = box
+        dx, dy = getattr(self, "runtime_region_offset", (0, 0))
+        x += dx
+        y += dy
         x = int(round(x))
         y = int(round(y))
         w = max(0, int(round(w)))
@@ -277,6 +316,15 @@ def _clean_player_name(text: Optional[str]) -> Optional[str]:
         return None
     cleaned = " ".join(str(text).split()).strip()
     return cleaned or None
+
+
+def _pair_from_mapping(value: Any) -> Optional[Tuple[int, int]]:
+    if not isinstance(value, (list, tuple)) or len(value) < 2:
+        return None
+    try:
+        return int(value[0]), int(value[1])
+    except (TypeError, ValueError):
+        return None
 
 if __name__ == "__main__":
     scan = ScanTable()

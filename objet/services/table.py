@@ -106,7 +106,7 @@ class Table:
             )
         for index, player in enumerate(self.players.player, start=1):
             name = None
-            if player.coordonate_name is not None and hasattr(self.scan, "scan_player_name"):
+            if player.name is None and player.coordonate_name is not None and hasattr(self.scan, "scan_player_name"):
                 name = self.scan.scan_player_name(position_name=player.coordonate_name)
             etat , money = self.scan.scan_player(
                 position_money= player.fond.coordinates_value,

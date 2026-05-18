@@ -187,6 +187,12 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help="Dossier contenant les captures plein écran à analyser",
     )
     parser.add_argument("--strict", type=float, default=0.985, help="Score min (0-1) pour autoskip complet")
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=DEFAULT_ACCEPT_THRESHOLD,
+        help="Score min (0-1) pour accepter une valeur/couleur",
+    )
     parser.add_argument("--trim", type=int, default=6, help="Bordure rognée pour reco & sauvegarde (px)")
     parser.add_argument("--force-all", action="store_true", help="Toujours ouvrir l’UI même si autoskip possible")
     return parser.parse_args(argv)
@@ -212,7 +218,7 @@ def main(argv: Sequence[str]) -> int:
     identifier = CardIdentifier(
         game_dir,
         trim=int(args.trim),
-        threshold=DEFAULT_ACCEPT_THRESHOLD,
+        threshold=float(args.threshold),
         strict=float(args.strict),
     )
 

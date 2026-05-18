@@ -122,17 +122,34 @@ class TemplateIndex:
         return self.default_set
 
     def get_templates(
-        self, template_set: Optional[str] = None
+        self,
+        template_set: Optional[str] = None,
+        *,
+        include_fallback_sets: bool = False,
     ) -> Tuple[Dict[str, List[np.ndarray]], Dict[str, List[np.ndarray]]]:
         key = self._normalise_set(template_set)
-        numbers = self.numbers_by_set.get(key, {})
-        suits = self.suits_by_set.get(key, {})
+        numbers = dict(self.numbers_by_set.get(key, {}))
+        suits = dict(self.suits_by_set.get(key, {}))
         if not numbers and not suits and template_set:
-            # Aucun template pour cet ensemble → fallback silencieux sur le défaut.
+            # Aucun template pour cet ensemble -> fallback silencieux sur le défaut.
             key = self.default_set
-            numbers = self.numbers_by_set.get(key, {})
-            suits = self.suits_by_set.get(key, {})
+            numbers = dict(self.numbers_by_set.get(key, {}))
+            suits = dict(self.suits_by_set.get(key, {}))
+        if include_fallback_sets and template_set:
+            for fallback_key in self._fallback_set_keys(key):
+                for label, imgs in self.numbers_by_set.get(fallback_key, {}).items():
+                    numbers.setdefault(label, imgs)
+                for label, imgs in self.suits_by_set.get(fallback_key, {}).items():
+                    suits.setdefault(label, imgs)
         return numbers, suits
+
+    def _fallback_set_keys(self, preferred_key: str) -> List[str]:
+        keys = { *self.numbers_by_set.keys(), *self.suits_by_set.keys() }
+        ordered: List[str] = []
+        if self.default_set in keys and self.default_set != preferred_key:
+            ordered.append(self.default_set)
+        ordered.extend(sorted(key for key in keys if key not in {preferred_key, self.default_set}))
+        return ordered
 
     def available_sets(self) -> List[str]:
         keys = { *self.numbers_by_set.keys(), *self.suits_by_set.keys() }
@@ -335,7 +352,7 @@ def recognize_number_and_suit(
     g_num = _to_gray(number_patch)
     g_suit = _to_gray(suit_patch)
 
-    numbers, suits = idx.get_templates(template_set)
+    numbers, suits = idx.get_templates(template_set, include_fallback_sets=True)
 
     best_num, best_num_score = None, -1.0
     for label, tpls in numbers.items():

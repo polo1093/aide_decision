@@ -15,7 +15,19 @@ from objet.utils.calibration import bbox_from_region, load_coordinates
 import re
 DEFAULT_COORD_PATH = Path("config/PMU/coordinates.json")
 
-list_etat_button= ["check", "relance", "mise", "fold", "paie", "all-in"  ]
+BUTTON_STATE_ALIASES = {
+    "check": "check",
+    "relance": "relance",
+    "raise": "relance",
+    "mise": "mise",
+    "bet": "mise",
+    "fold": "fold",
+    "paie": "paie",
+    "call": "paie",
+    "all-in": "all-in",
+    "allin": "all-in",
+}
+list_etat_button = list(BUTTON_STATE_ALIASES)
 
 @dataclass
 class Buttons:
@@ -107,8 +119,8 @@ class Button:
         etat = one_element_in_str(list_etat_button,texte)
         if etat:
             self.enabled = True
-            self.etat = etat
-            self.value =  float_in_str(texte) 
+            self.etat = BUTTON_STATE_ALIASES.get(etat, etat)
+            self.value =  float_in_str(texte, state=self.etat) 
         else :
             self.enabled = False
             self.etat = ""
@@ -117,22 +129,33 @@ class Button:
     
     
     
-def float_in_str(texte: str) -> float:
-    """Extrait la première valeur numérique d'une chaîne et la retourne en float.
+def float_in_str(texte: str, *, state: str = "") -> float:
+    """Extrait une valeur numérique d'une chaîne bouton et la retourne en float.
     Retourne 0.0 si aucune valeur trouvée ou en cas d'erreur."""
     if not texte:
         return 0.0
 
-    m = re.search(r'[-+]?\d+(?:[.,]\d+)?', texte)
-    if not m:
-        return 0
-    else:
-        s = m.group(0).replace(',', '.')
-        try:
-            v = float(s)
-        except ValueError:
-            v = 0
-    return v 
+    if state.lower() in {"check", "fold"}:
+        return 0.0
+
+    cleaned = re.sub(r"\bf\s*\d+\b", " ", texte, flags=re.IGNORECASE)
+    grouped = r"[-+]?\d+(?:\s+\d{3})+(?:[.,]\d+)?"
+    plain = r"[-+]?\d+(?:[.,]\d+)?"
+    matches = re.findall(f"{grouped}|{plain}", cleaned)
+    if not matches:
+        return 0.0
+
+    token = matches[-1].strip()
+    if state.lower() in {"paie", "mise", "relance"} and re.fullmatch(r"[45]\d{2}", token):
+        token = token[1:]
+
+    token = re.sub(r"(?<!\d)5\s+(?=\d{1,3}(?:\s+\d{3})+(?:[.,]\d+)?\b)", "", token)
+    token = re.sub(r"(?<!\d)5(?=\d{1,3}(?:\s+\d{3})+(?:[.,]\d+)?\b)", "", token)
+    s = token.replace(" ", "").replace(',', '.')
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
 
 
 
@@ -153,8 +176,12 @@ def _matches_with_one_diff(candidate: str, text: str) -> bool:
 
 
 def one_element_in_str(list_str, texte: str):
+    text = str(texte).lower()
     for cand in list_str:
-        if _matches_with_one_diff(cand, texte):
+        if cand.lower() in text:
+            return cand
+    for cand in list_str:
+        if _matches_with_one_diff(cand.lower(), text):
             return cand
     return None
 

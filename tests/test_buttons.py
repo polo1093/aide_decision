@@ -48,3 +48,52 @@ def test_check_button_makes_min_value_free_even_with_bet_button() -> None:
     assert buttons.has_free_action() is True
     assert buttons.has_aggressive_action() is True
     assert buttons.min_value() == 0.0
+
+
+def test_apply_scan_accepts_english_pokerth_buttons() -> None:
+    button = Button()
+
+    button.apply_scan("F2 Call $20")
+
+    assert button.is_activate() is True
+    assert button.etat == "paie"
+    assert button.value == 20.0
+
+
+def test_apply_scan_ignores_function_key_for_fold() -> None:
+    button = Button()
+
+    button.apply_scan("F1 Fold")
+
+    assert button.is_activate() is True
+    assert button.etat == "fold"
+    assert button.value == 0.0
+
+
+def test_apply_scan_keeps_all_in_distinct_from_call() -> None:
+    button = Button()
+
+    button.apply_scan("F4 All-In")
+
+    assert button.is_activate() is True
+    assert button.etat == "all-in"
+
+
+def test_apply_scan_fixes_dollar_read_as_four_for_call_button() -> None:
+    button = Button()
+
+    button.apply_scan("call 410")
+
+    assert button.is_activate() is True
+    assert button.etat == "paie"
+    assert button.value == 10.0
+
+
+def test_apply_scan_fixes_grouped_all_in_amount() -> None:
+    button = Button()
+
+    button.apply_scan("F4 All-In 54 840")
+
+    assert button.is_activate() is True
+    assert button.etat == "all-in"
+    assert button.value == 4840.0

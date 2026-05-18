@@ -56,9 +56,21 @@ def _strip_currency_symbols(text: str) -> str:
     return text
 
 
+def _fix_currency_ocr_prefix(text: str) -> str:
+    """Drop a leading OCR ``5`` when it most likely represents a currency sign."""
+
+    # PokerTH often renders amounts like "$4 980". EasyOCR may read the dollar
+    # as "5", producing "54 980". Keep this correction limited to grouped
+    # thousands so regular values such as "530" are not silently rewritten.
+    text = re.sub(r"(?<!\d)5\s+(?=\d{1,3}(?:\s+\d{3})+(?:[.,]\d+)?\b)", "", text)
+    return re.sub(r"(?<!\d)5(?=\d{1,3}(?:\s+\d{3})+(?:[.,]\d+)?\b)", "", text)
+
+
 def _extract_numeric_tokens(text: str) -> list[str]:
     """Return candidate numeric tokens from an OCR string."""
-    return re.findall(r"[0-9]+(?:[.,][0-9]+)*", text)
+    grouped = r"[0-9]+(?:\s+[0-9]{3})+(?:[.,][0-9]+)?"
+    plain = r"[0-9]+(?:[.,][0-9]+)*"
+    return re.findall(f"{grouped}|{plain}", text)
 
 
 @dataclass
@@ -138,8 +150,10 @@ class OcrEngine:
         allow_dot: bool,
     ) -> Optional[float]:
         cleaned_text = _strip_currency_symbols(text)
+        cleaned_text = _fix_currency_ocr_prefix(cleaned_text)
         tokens = _extract_numeric_tokens(cleaned_text)
 
+        candidates: list[float] = []
         for token in tokens:
             sanitized = token.replace(" ", "")
             if not sanitized:
@@ -177,9 +191,11 @@ class OcrEngine:
             if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", digits):
                 continue
 
-            return float(digits)
+            candidates.append(float(digits))
 
-        return None
+        if not candidates:
+            return None
+        return max(candidates)
 
     def read_amount(
         self,

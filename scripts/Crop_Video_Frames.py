@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 from pathlib import Path
+import time
 from typing import Optional, Tuple
 
 import cv2
@@ -67,6 +68,19 @@ def _iter_time_step(cap: cv2.VideoCapture, seconds_step: float):
         index += 1
 
 
+def _format_duration(seconds: Optional[float]) -> str:
+    if seconds is None or seconds < 0:
+        return "?"
+    total = int(round(seconds))
+    minutes, sec = divmod(total, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours:d}h{minutes:02d}m{sec:02d}s"
+    if minutes:
+        return f"{minutes:d}m{sec:02d}s"
+    return f"{sec:d}s"
+
+
 def _ensure_output_dir(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path
@@ -103,6 +117,12 @@ def main(argv: Optional[list] = None) -> int:
         default="INFO",
         help="Logging level (DEBUG, INFO, ...). Default: INFO",
     )
+    parser.add_argument(
+        "--progress-steps",
+        type=int,
+        default=20,
+        help="Number of progress updates during extraction (default: 20)",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -138,17 +158,59 @@ def main(argv: Optional[list] = None) -> int:
     if not capture.isOpened():
         raise SystemExit(f"ERROR: cannot open video: {video_path}")
 
+    fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+    if fps <= 1e-6:
+        fps = 30.0
+    total_frames_raw = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    step_frames = max(1, int(round(fps * float(args.interval))))
+    expected_saves = ((total_frames_raw - 1) // step_frames + 1) if total_frames_raw > 0 else None
+    duration = (total_frames_raw / fps) if total_frames_raw > 0 else None
+    logger.info(
+        "Video details: fps=%.2f, frames=%s, duration=%s, interval=%.2fs, step=%s frame(s)",
+        fps,
+        total_frames_raw if total_frames_raw > 0 else "?",
+        _format_duration(duration),
+        float(args.interval),
+        step_frames,
+    )
+    if expected_saves is not None:
+        logger.info("Expected output: about %s PNG frame(s)", expected_saves)
+
     saved = 0
+    started = time.perf_counter()
+    progress_steps = max(1, int(args.progress_steps))
+    progress_every = max(1, (expected_saves or progress_steps) // progress_steps)
     for frame_index, frame_bgr in _iter_time_step(capture, seconds_step=float(args.interval)):
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         frame_img = Image.fromarray(frame_rgb).convert("RGBA")
         out_path = out_dir / f"frame_{frame_index:06d}.png"
         frame_img.save(out_path)
         saved += 1
-        logger.debug("Saved %s", out_path.name)
+        should_report = saved == 1 or saved % progress_every == 0
+        if expected_saves is not None and saved >= expected_saves:
+            should_report = True
+        if should_report:
+            elapsed = time.perf_counter() - started
+            pct = (saved / expected_saves * 100.0) if expected_saves else 0.0
+            eta = None
+            if expected_saves and saved > 0:
+                eta = elapsed * max(0, expected_saves - saved) / saved
+            logger.info(
+                "Progress: %s/%s saved (%.1f%%), source frame=%s/%s, elapsed=%s, ETA=%s, last=%s",
+                saved,
+                expected_saves if expected_saves is not None else "?",
+                pct,
+                frame_index,
+                total_frames_raw if total_frames_raw > 0 else "?",
+                _format_duration(elapsed),
+                _format_duration(eta),
+                out_path.name,
+            )
+        else:
+            logger.debug("Saved %s", out_path.name)
 
     capture.release()
-    logger.info("Extraction complete: %s frames saved", saved)
+    logger.info("Extraction complete: %s frames saved in %s", saved, _format_duration(time.perf_counter() - started))
     print(f"Done. {saved} frames written to {out_dir}")
     return 0
 

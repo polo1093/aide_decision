@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import json
+import queue
 from pathlib import Path
 import subprocess
 import sys
+import threading
 import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -27,6 +30,9 @@ logger = get_logger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parent
 CONFIG_ROOT = PROJECT_ROOT / "config"
 SCRIPTS_ROOT = PROJECT_ROOT / "scripts"
+INTERFACE_STATE_PATH = CONFIG_ROOT / "_interface_state.json"
+DEFAULT_GAME_NAME = "PMU"
+DEFAULT_WINDOW_GEOMETRY = "1080x760"
 VIDEO_FILETYPES = (
     ("Videos", "*.avi *.mp4 *.mkv *.mov"),
     ("Tous les fichiers", "*.*"),
@@ -34,11 +40,19 @@ VIDEO_FILETYPES = (
 
 
 class App(tk.Tk):
-    def __init__(self, controller: Controller, scan_interval_ms: int = 1000, game_name: str = "PMU"):
+    def __init__(
+        self,
+        controller: Controller,
+        scan_interval_ms: int = 1000,
+        game_name: str = DEFAULT_GAME_NAME,
+        *,
+        window_geometry: Optional[str] = None,
+        window_state: Optional[str] = None,
+    ):
         super().__init__()
 
         self.title("Aide decision - table live")
-        self.geometry("1080x760")
+        self.geometry(window_geometry or DEFAULT_WINDOW_GEOMETRY)
         self.minsize(960, 640)
 
         self.controller = controller
@@ -48,6 +62,10 @@ class App(tk.Tk):
         self.scanning = False
         self.scan_interval_ms = scan_interval_ms
         self._last_tick_t: Optional[float] = None
+        self._scan_in_flight = False
+        self._scan_result_queue: "queue.Queue[tuple[str, object, float]]" = queue.Queue()
+        self._scan_poll_after_id: Optional[str] = None
+        self._tool_processes: dict[str, subprocess.Popen] = {}
 
         self.last_call_ms: Optional[float] = None
         self.fps: Optional[float] = None
@@ -65,6 +83,9 @@ class App(tk.Tk):
         self._build_menu()
         self._layout()
         self._bind_keys()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        if window_state == "zoomed":
+            self.after(0, lambda: self.state("zoomed"))
         self._refresh_profile_status()
         self._apply_empty_state()
 
@@ -392,9 +413,24 @@ class App(tk.Tk):
         self.var_perf.set("scan: --- ms | fps: ---")
         self._apply_empty_state()
         self._refresh_profile_status()
+        self._save_interface_state()
+
+    def _on_close(self) -> None:
+        self.stop_scan()
+        self._save_interface_state()
+        self.destroy()
+
+    def _save_interface_state(self) -> None:
+        save_interface_state(
+            {
+                "game_name": self._current_game_name(),
+                "window_geometry": self.geometry(),
+                "window_state": self.state(),
+            }
+        )
 
     def _current_game_name(self) -> str:
-        return (self.var_game.get() or self.game_name or "PMU").strip()
+        return (self.var_game.get() or self.game_name or DEFAULT_GAME_NAME).strip()
 
     def _open_quick_setup_dialog(self) -> None:
         dialog = tk.Toplevel(self)
@@ -536,9 +572,22 @@ class App(tk.Tk):
 
         self.stop_scan()
         command = [sys.executable, str(script_path), *args]
+        process_key = format_command(command)
+        existing = self._tool_processes.get(process_key)
+        if existing is not None and existing.poll() is None:
+            self.var_notice.set(f"Outil deja ouvert: {label}")
+            self._set_text(
+                f"Outil deja ouvert: {label}\n"
+                f"PID: {existing.pid}\n"
+                "Ferme la fenetre de cet outil avant de le relancer."
+            )
+            return existing
+        self._tool_processes.pop(process_key, None)
+
+        launch_command = build_interface_launch_command(command, cwd=PROJECT_ROOT)
         try:
             process = subprocess.Popen(
-                command,
+                launch_command,
                 cwd=str(PROJECT_ROOT),
                 creationflags=_subprocess_creation_flags(),
             )
@@ -547,13 +596,17 @@ class App(tk.Tk):
             messagebox.showerror("Lancement impossible", str(exc))
             return None
 
-        logger.info("lancement_script label=%s pid=%s command=%s", label, process.pid, command)
+        logger.info("lancement_script label=%s pid=%s command=%s", label, process.pid, launch_command)
+        self._tool_processes[process_key] = process
         self.var_notice.set(f"Outil lance: {label}")
         self._set_text(f"Outil lance: {label}\nPID: {process.pid}\nCommande:\n{format_command(command)}")
         return process
 
     def start_scan(self) -> None:
         self._update_interval()
+        if self.scanning:
+            logger.info("scan_continu deja_actif interval_ms=%s", self.scan_interval_ms)
+            return
         self.scanning = True
         self._last_tick_t = time.time()
         logger.info("debut scan_continu interval_ms=%s", self.scan_interval_ms)
@@ -579,7 +632,71 @@ class App(tk.Tk):
         if not self.scanning:
             return
 
-        state, dt_ms = self._run_controller(context="Scan continu")
+        if self._scan_in_flight:
+            self._schedule_scan_poll()
+            return
+
+        self._scan_in_flight = True
+        self.var_perf.set("scan: en cours | fps: " + (f"{self.fps:.1f}" if self.fps else "---"))
+        thread = threading.Thread(
+            target=self._run_controller_worker,
+            name="scan-controller-worker",
+            daemon=True,
+        )
+        thread.start()
+        self._schedule_scan_poll()
+
+    def _run_controller_worker(self) -> None:
+        t0 = time.perf_counter()
+        try:
+            state = self.controller.run_cycle()
+        except Exception as exc:
+            dt_ms = (time.perf_counter() - t0) * 1000.0
+            self._scan_result_queue.put(("error", exc, dt_ms))
+            return
+        dt_ms = (time.perf_counter() - t0) * 1000.0
+        self._scan_result_queue.put(("ok", state, dt_ms))
+
+    def _schedule_scan_poll(self) -> None:
+        if self._scan_poll_after_id is None:
+            self._scan_poll_after_id = self.after(25, self._poll_scan_result)
+
+    def _poll_scan_result(self) -> None:
+        self._scan_poll_after_id = None
+        try:
+            status, payload, dt_ms = self._scan_result_queue.get_nowait()
+        except queue.Empty:
+            if self._scan_in_flight:
+                self._schedule_scan_poll()
+            return
+
+        self._scan_in_flight = False
+        self.last_call_ms = dt_ms
+
+        if status == "error":
+            self.scanning = False
+            error = payload if isinstance(payload, Exception) else RuntimeError(str(payload))
+            self._handle_controller_exception(context="Scan continu", error=error)
+            return
+
+        if not self.scanning:
+            return
+
+        state = payload
+        if not isinstance(state, ControllerViewState):
+            self.scanning = False
+            self._handle_controller_exception(
+                context="Scan continu",
+                error=TypeError(f"Etat de scan inattendu: {type(state)!r}"),
+            )
+            return
+        self._apply_scan_result(state, dt_ms)
+
+        if self.scanning:
+            next_delay = max(50, self.scan_interval_ms - int(dt_ms))
+            self.after(next_delay, self._tick)
+
+    def _apply_scan_result(self, state: ControllerViewState, dt_ms: float) -> None:
         self.last_call_ms = dt_ms
 
         now = time.time()
@@ -593,10 +710,6 @@ class App(tk.Tk):
         self._apply_view_state(state)
         fps_txt = f"{self.fps:.1f}" if self.fps else "---"
         self.var_perf.set(f"scan: {dt_ms:.1f} ms | fps: {fps_txt}")
-
-        if self.scanning:
-            next_delay = max(1, self.scan_interval_ms - int(dt_ms))
-            self.after(next_delay, self._tick)
 
     def _run_controller(self, *, context: str) -> tuple[ControllerViewState, float]:
         t0 = time.perf_counter()
@@ -840,7 +953,7 @@ def _history_profile_item(game_name: str, *, history_root: Path | str) -> Profil
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="UI autour de Controller.run_cycle()")
     parser.add_argument("--interval", type=int, default=1000, help="Intervalle entre deux scans en ms (25..2000)")
-    parser.add_argument("--game", default="PMU", help="Nom du jeu/profil dans config/ (default: PMU)")
+    parser.add_argument("--game", help="Nom du jeu/profil dans config/ (sinon dernier profil utilise)")
     parser.add_argument("--list-games", action="store_true", help="Liste les profils disponibles puis quitte.")
     parser.add_argument("--snapshot", action="store_true", help="Execute un seul scan dans le terminal.")
     return parser.parse_args(argv)
@@ -853,12 +966,20 @@ def main(argv=None) -> None:
             print(name)
         return
 
+    interface_state = load_interface_state()
+    initial_game = select_initial_game(args.game, interface_state, available_game_names())
+
     configure_logging()
     with session_log("interface") as log_file:
-        logger.info("debut interface interval_ms=%s log=%s", args.interval, log_path_value(log_file))
+        logger.info(
+            "debut interface interval_ms=%s game=%s log=%s",
+            args.interval,
+            initial_game,
+            log_path_value(log_file),
+        )
         controller = Controller(
-            game_name=args.game,
-            coord_path=CONFIG_ROOT / args.game / "coordinates.json",
+            game_name=initial_game,
+            coord_path=CONFIG_ROOT / initial_game / "coordinates.json",
         )
         if args.snapshot:
             try:
@@ -875,7 +996,13 @@ def main(argv=None) -> None:
             logger.info("fin snapshot_cli status=ok log=%s", log_path_value(log_file))
             return
 
-        app = App(controller=controller, scan_interval_ms=args.interval, game_name=args.game)
+        app = App(
+            controller=controller,
+            scan_interval_ms=args.interval,
+            game_name=initial_game,
+            window_geometry=_state_text(interface_state, "window_geometry"),
+            window_state=_state_text(interface_state, "window_state"),
+        )
         app.mainloop()
         logger.info("fin interface status=closed log=%s", log_path_value(log_file))
 
@@ -883,13 +1010,59 @@ def main(argv=None) -> None:
 def available_game_names(config_root: Path | str = CONFIG_ROOT) -> list[str]:
     root = Path(config_root)
     if not root.exists():
-        return ["PMU"]
+        return [DEFAULT_GAME_NAME]
     names = sorted(
         path.name
         for path in root.iterdir()
         if path.is_dir() and (path / "coordinates.json").exists()
     )
-    return names or ["PMU"]
+    return names or [DEFAULT_GAME_NAME]
+
+
+def load_interface_state(path: Path | str = INTERFACE_STATE_PATH) -> dict[str, object]:
+    state_path = Path(path)
+    try:
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except Exception as exc:
+        logger.warning("interface_state_lecture_impossible path=%s error=%s", state_path, exc)
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def save_interface_state(state: dict[str, object], path: Path | str = INTERFACE_STATE_PATH) -> None:
+    state_path = Path(path)
+    try:
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception as exc:
+        logger.warning("interface_state_ecriture_impossible path=%s error=%s", state_path, exc)
+
+
+def select_initial_game(cli_game: Optional[str], state: dict[str, object], profiles: list[str]) -> str:
+    candidates: list[str] = []
+    if cli_game:
+        candidates.append(cli_game)
+    saved_game = _state_text(state, "game_name")
+    if saved_game:
+        candidates.append(saved_game)
+    candidates.append(DEFAULT_GAME_NAME)
+    candidates.extend(profiles)
+
+    for candidate in candidates:
+        game = candidate.strip()
+        if game and game in profiles:
+            return game
+    return DEFAULT_GAME_NAME
+
+
+def _state_text(state: dict[str, object], key: str) -> Optional[str]:
+    value = state.get(key)
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    return None
 
 
 def normalise_game_name(game_name: str) -> str:
@@ -967,6 +1140,38 @@ def script_path_for(script_name: str) -> Path:
 
 def _subprocess_creation_flags() -> int:
     return getattr(subprocess, "CREATE_NEW_CONSOLE", 0) if sys.platform.startswith("win") else 0
+
+
+def build_interface_launch_command(
+    command: list[str],
+    *,
+    cwd: Path | str = PROJECT_ROOT,
+    launcher_dir: Path | str | None = None,
+) -> list[str]:
+    if not sys.platform.startswith("win"):
+        return command
+    launcher_root = Path(launcher_dir) if launcher_dir is not None else PROJECT_ROOT / "logs" / "tool_launchers"
+    launcher_root.mkdir(parents=True, exist_ok=True)
+    launcher_path = launcher_root / f"tool_{int(time.time() * 1000)}_{abs(hash(tuple(command))) & 0xffff:x}.cmd"
+    command_line = subprocess.list2cmdline([str(part) for part in command])
+    launcher_path.write_text(
+        "\n".join(
+            [
+                "@echo off",
+                "setlocal",
+                f'cd /d "{Path(cwd)}"',
+                command_line,
+                "set tool_exit=%ERRORLEVEL%",
+                "echo.",
+                "echo Termine avec code %tool_exit% . Appuie sur une touche pour fermer cette fenetre.",
+                "pause >nul",
+                "exit /b %tool_exit%",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return ["cmd.exe", "/C", str(launcher_path)]
 
 
 def format_command(command: list[str]) -> str:

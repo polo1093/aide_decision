@@ -57,7 +57,7 @@ def _trim(img: Image.Image, border: int) -> Image.Image:
 
 
 def _make_preview(num_img: Image.Image, suit_img: Image.Image) -> Image.Image:
-    """Empile number/suit verticalement pour l’UI."""
+    """Empile number/suit verticalement pour l'UI, avec zoom lisible."""
     num_w, num_h = num_img.size
     suit_w, suit_h = suit_img.size
     width = max(num_w, suit_w)
@@ -65,6 +65,12 @@ def _make_preview(num_img: Image.Image, suit_img: Image.Image) -> Image.Image:
     preview = Image.new("RGB", (width, num_h + suit_h + spacer), "#f0f0f0")
     preview.paste(num_img, ((width - num_w) // 2, 0))
     preview.paste(suit_img, ((width - suit_w) // 2, num_h + spacer))
+    scale = max(1, min(3, 120 // max(1, preview.height)))
+    if scale > 1:
+        preview = preview.resize(
+            (preview.width * scale, preview.height * scale),
+            Image.Resampling.NEAREST,
+        )
     return preview
 
 
