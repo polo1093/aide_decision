@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from launch import (
+    App,
     available_game_names,
     build_interface_launch_command,
     build_capture_frames_args,
@@ -17,6 +19,7 @@ from launch import (
     load_interface_state,
     needs_card_identification,
     normalise_game_name,
+    normalise_scan_interval_ms,
     profile_status,
     save_interface_state,
     select_initial_game,
@@ -71,6 +74,15 @@ def test_script_path_for_resolves_existing_script() -> None:
 def test_normalise_game_name_rejects_blank_values() -> None:
     with pytest.raises(ValueError):
         normalise_game_name("   ")
+
+
+def test_normalise_scan_interval_accepts_large_values() -> None:
+    assert normalise_scan_interval_ms("200000") == 200000
+
+
+def test_normalise_scan_interval_keeps_minimum_and_fallback() -> None:
+    assert normalise_scan_interval_ms("1") == 25
+    assert normalise_scan_interval_ms("pas un nombre", fallback=750) == 750
 
 
 def test_build_quick_setup_args_includes_video_and_selected_skip_flags(tmp_path: Path) -> None:
@@ -236,3 +248,52 @@ def test_needs_card_identification_for_partial_flop_board() -> None:
     )
 
     assert needs_card_identification(state) is True
+
+
+def test_live_unread_card_selects_visible_missing_hero_card() -> None:
+    app = App.__new__(App)
+
+    known_card = SimpleNamespace(
+        formatted="Q♥",
+        card_coordinates_value=(1, 2, 3, 4),
+        card_coordinates_suit=(5, 6, 7, 8),
+        template_set="hand",
+    )
+    missing_card = SimpleNamespace(
+        formatted=None,
+        card_coordinates_value=(10, 20, 30, 40),
+        card_coordinates_suit=(50, 60, 70, 80),
+        template_set="hand",
+    )
+    cards = SimpleNamespace(
+        me_cards=lambda: [known_card, missing_card],
+        board_cards=lambda: [],
+    )
+    scan = SimpleNamespace(
+        screen_array=object(),
+        _extract_patch=lambda box, pad=3: ("patch", box, pad),
+    )
+    app.controller = SimpleNamespace(game=SimpleNamespace(table=SimpleNamespace(cards=cards, scan=scan)))
+    app._live_card_patch_is_hand_overlay = lambda _scan, _card, _patch: False
+    app._live_card_patch_present = lambda _patch: True
+    app._bgr_patch_to_pil = lambda patch: patch
+
+    state = ControllerViewState(
+        game_name="PokerTH",
+        scan_count=1,
+        scan_ok=True,
+        scan_failures=0,
+        street="PREFLOP",
+        hero_scan=["Q♥", None],
+        board_scan=[None, None, None, None, None],
+        buttons=["B0 call"],
+    )
+
+    result = App._find_live_unread_card(app, state)
+
+    assert result is not None
+    base_key, card, number_patch, suit_patch = result
+    assert base_key == "player_card_2"
+    assert card is missing_card
+    assert number_patch == ("patch", (10, 20, 30, 40), 3)
+    assert suit_patch == ("patch", (50, 60, 70, 80), 3)

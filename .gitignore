@@ -2,6 +2,7 @@
 /screen/erreur/
 /poker/
 /logs/
+/config/_interface_state.json
 
 # Media files that are too large for the repository
 *.avi

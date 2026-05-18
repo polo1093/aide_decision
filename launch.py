@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import argparse
-import json
 import queue
-from pathlib import Path
 import subprocess
 import sys
 import threading
@@ -15,7 +13,6 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Optional
 
 from objet.services.controller import Controller, ControllerViewState
-from objet.services.player_history import DEFAULT_PLAYER_HISTORY_DIR, player_history_path
 from objet.utils.debug_capture import capture_blocking_error_screen
 from objet.utils.logging_config import (
     configure_logging,
@@ -23,28 +20,55 @@ from objet.utils.logging_config import (
     log_path_value,
     session_log,
 )
+from launch_support import (
+    AUTO_IDENTIFY_COOLDOWN_SECONDS,
+    CONFIG_ROOT,
+    DEFAULT_GAME_NAME,
+    DEFAULT_SCAN_INTERVAL_MS,
+    DEFAULT_WINDOW_GEOMETRY,
+    PROJECT_ROOT,
+    VIDEO_FILETYPES,
+    ProfileItem,
+    _decision_explanation,
+    _display_card,
+    _display_percent,
+    _display_value,
+    _fmt_optional_float,
+    _lighten_hex,
+    _pad_list,
+    _state_text,
+    _style_card_label,
+    _style_equity_label,
+    _style_metric_label,
+    _subprocess_creation_flags,
+    _target_button_bbox,
+    available_game_names,
+    build_capture_frames_args,
+    build_identify_cards_args,
+    build_interface_launch_command,
+    build_quick_setup_args,
+    build_validate_cards_args,
+    build_zone_editor_args,
+    format_command,
+    load_interface_state,
+    needs_card_identification,
+    normalise_game_name,
+    normalise_scan_interval_ms,
+    profile_status,
+    save_interface_state,
+    script_path_for,
+    select_initial_game,
+)
 
 
 logger = get_logger(__name__)
-
-PROJECT_ROOT = Path(__file__).resolve().parent
-CONFIG_ROOT = PROJECT_ROOT / "config"
-SCRIPTS_ROOT = PROJECT_ROOT / "scripts"
-INTERFACE_STATE_PATH = CONFIG_ROOT / "_interface_state.json"
-DEFAULT_GAME_NAME = "PMU"
-DEFAULT_WINDOW_GEOMETRY = "1080x760"
-AUTO_IDENTIFY_COOLDOWN_SECONDS = 5.0
-VIDEO_FILETYPES = (
-    ("Videos", "*.avi *.mp4 *.mkv *.mov"),
-    ("Tous les fichiers", "*.*"),
-)
 
 
 class App(tk.Tk):
     def __init__(
         self,
         controller: Controller,
-        scan_interval_ms: int = 1000,
+        scan_interval_ms: int = DEFAULT_SCAN_INTERVAL_MS,
         game_name: str = DEFAULT_GAME_NAME,
         *,
         window_geometry: Optional[str] = None,
@@ -61,7 +85,7 @@ class App(tk.Tk):
         self.game_profiles = available_game_names()
 
         self.scanning = False
-        self.scan_interval_ms = scan_interval_ms
+        self.scan_interval_ms = normalise_scan_interval_ms(scan_interval_ms)
         self._last_tick_t: Optional[float] = None
         self._scan_in_flight = False
         self._scan_result_queue: "queue.Queue[tuple[str, object, float]]" = queue.Queue()
@@ -69,6 +93,9 @@ class App(tk.Tk):
         self._tool_processes: dict[str, subprocess.Popen] = {}
         self._last_auto_identify_t = 0.0
         self._tools_window: Optional[tk.Toplevel] = None
+        self._live_card_prompt_open = False
+        self._live_card_identifier = None
+        self._live_card_identifier_game: Optional[str] = None
 
         self.last_call_ms: Optional[float] = None
         self.fps: Optional[float] = None
@@ -188,6 +215,12 @@ class App(tk.Tk):
         self.frm_side = ttk.Frame(self.main)
         self.frm_profile = ttk.LabelFrame(self.frm_side, text="Profil")
         self.btn_tools = ttk.Button(self.frm_side, text="Outils", command=self._open_tools_window)
+        self.frm_options = ttk.LabelFrame(self.frm_side, text="Options")
+        self.chk_auto_identify_cards = ttk.Checkbutton(
+            self.frm_options,
+            text="Demander carte non lue (live, 5s)",
+            variable=self.var_auto_identify_cards,
+        )
         self.frm_players = ttk.LabelFrame(self.frm_side, text="Joueurs")
         self.var_players = tk.StringVar(value="")
         self.lbl_players = tk.Label(
@@ -346,6 +379,8 @@ class App(tk.Tk):
         self.frm_side.grid_rowconfigure(1, weight=1)
         self.frm_profile.pack(side="top", fill="x", pady=(0, 8))
         self.btn_tools.pack(side="top", fill="x", pady=(0, 8))
+        self.frm_options.pack(side="top", fill="x", pady=(0, 8))
+        self.chk_auto_identify_cards.pack(side="top", anchor="w", padx=12, pady=10)
         self.frm_players.pack(side="top", fill="both", expand=True, pady=(0, 8))
         self.frm_buttons.pack(side="top", fill="x")
         self.lbl_players.pack(side="top", anchor="w", padx=12, pady=10)
@@ -360,6 +395,7 @@ class App(tk.Tk):
         self.bind("<F5>", lambda _e: self.start_scan())
         self.bind("<F6>", lambda _e: self.snapshot_once())
         self.ent_interval.bind("<Return>", lambda _e: self._update_interval())
+        self.ent_interval.bind("<FocusOut>", lambda _e: self._update_interval())
         self.cmb_game.bind("<<ComboboxSelected>>", lambda _e: self._switch_game())
 
     def _apply_empty_state(self) -> None:
@@ -380,12 +416,11 @@ class App(tk.Tk):
         self.txt.configure(state="disabled")
 
     def _update_interval(self) -> None:
-        try:
-            value = int(self.var_interval.get())
-            self.scan_interval_ms = max(25, min(2000, value))
-        except Exception:
-            self.scan_interval_ms = 1000
-            self.var_interval.set(str(self.scan_interval_ms))
+        self.scan_interval_ms = normalise_scan_interval_ms(
+            self.var_interval.get(),
+            fallback=self.scan_interval_ms,
+        )
+        self.var_interval.set(str(self.scan_interval_ms))
 
     def _switch_game(self) -> None:
         selected = self.var_game.get().strip()
@@ -451,7 +486,11 @@ class App(tk.Tk):
         body = ttk.Frame(window, padding=12)
         body.grid(row=0, column=0, sticky="nsew")
         body.grid_columnconfigure(0, weight=1)
-        body.grid_columnconfigure(1, weight=1)
+
+        tools_frame = ttk.LabelFrame(body, text="Outils", padding=8)
+        tools_frame.grid(row=0, column=0, sticky="ew")
+        tools_frame.grid_columnconfigure(0, weight=1)
+        tools_frame.grid_columnconfigure(1, weight=1)
 
         tool_actions = [
             ("Remapping", self._open_quick_setup_dialog),
@@ -462,7 +501,7 @@ class App(tk.Tk):
             ("Clean histo", self._clear_player_history),
         ]
         for index, (label, command) in enumerate(tool_actions):
-            ttk.Button(body, text=label, command=command).grid(
+            ttk.Button(tools_frame, text=label, command=command).grid(
                 row=index // 2,
                 column=index % 2,
                 sticky="ew",
@@ -470,19 +509,12 @@ class App(tk.Tk):
                 pady=4,
             )
 
-        option_row = (len(tool_actions) + 1) // 2
-        ttk.Checkbutton(
-            body,
-            text="Auto cartes inconnues (5s)",
-            variable=self.var_auto_identify_cards,
-        ).grid(row=option_row, column=0, columnspan=2, sticky="w", padx=6, pady=(10, 8))
-
         ttk.Button(body, text="Fermer", command=close_window).grid(
-            row=option_row + 1,
-            column=1,
+            row=1,
+            column=0,
             sticky="e",
             padx=6,
-            pady=(4, 0),
+            pady=(10, 0),
         )
 
         window.update_idletasks()
@@ -772,6 +804,7 @@ class App(tk.Tk):
         self._apply_scan_result(state, dt_ms)
 
         if self.scanning:
+            self._update_interval()
             next_delay = max(50, self.scan_interval_ms - int(dt_ms))
             self.after(next_delay, self._tick)
 
@@ -796,6 +829,8 @@ class App(tk.Tk):
             return
         if not needs_card_identification(state):
             return
+        if self._live_card_prompt_open:
+            return
 
         now = time.monotonic()
         elapsed = now - self._last_auto_identify_t
@@ -806,15 +841,145 @@ class App(tk.Tk):
             )
             return
 
+        if self._prompt_live_unread_card(state):
+            self._last_auto_identify_t = now
+
+    def _prompt_live_unread_card(self, state: ControllerViewState) -> bool:
+        candidate = self._find_live_unread_card(state)
+        if candidate is None:
+            logger.debug("SKIP identification_live_cartes raison=aucune_carte_visible_non_lue")
+            return False
+
+        base_key, card, number_patch, suit_patch = candidate
+        self._live_card_prompt_open = True
+        try:
+            identifier = self._get_live_card_identifier()
+            result = identifier.identify_from_patches(
+                number_patch,
+                suit_patch,
+                base_key=base_key,
+                template_set=getattr(card, "template_set", None),
+                interactive=True,
+                force_all=False,
+            )
+        except Exception as exc:
+            self._handle_controller_exception(context=f"Identification live {base_key}", error=exc)
+            return True
+        finally:
+            self._live_card_prompt_open = False
+
+        source = str(result.meta.get("source", ""))
+        if source == "delete":
+            self.var_notice.set("Delete ignore en mode live: aucune capture d'entrainement a supprimer.")
+            logger.info("identification_live_cartes delete_ignore base_key=%s", base_key)
+            return True
+
+        if result.number not in ("", "?") or result.suit not in ("", "?"):
+            number = result.number if result.number not in ("", "?") else getattr(card, "value", None)
+            suit = result.suit if result.suit not in ("", "?") else getattr(card, "suit", None)
+            card.apply_observation(number, suit)
+
+        self._reload_scan_card_templates()
+        self.var_notice.set(f"Carte live traitee: {base_key} ({source or 'inconnu'})")
+        logger.info(
+            "identification_live_cartes base_key=%s source=%s number=%s suit=%s",
+            base_key,
+            source,
+            result.number,
+            result.suit,
+        )
+        return True
+
+    def _get_live_card_identifier(self):
         game = self._current_game_name()
-        args = build_identify_cards_args(game)
-        if self._is_tool_running("identify_card.py", args):
-            logger.debug("SKIP auto_identification_cartes raison=outil_deja_ouvert game=%s", game)
+        if self._live_card_identifier is not None and self._live_card_identifier_game == game:
+            return self._live_card_identifier
+
+        from objet.services.card_identifier import CardIdentifier
+
+        self._live_card_identifier = CardIdentifier(CONFIG_ROOT / game)
+        self._live_card_identifier_game = game
+        return self._live_card_identifier
+
+    def _find_live_unread_card(self, state: ControllerViewState):
+        if not state.scan_ok:
+            return None
+
+        scan = getattr(getattr(self.controller.game, "table", None), "scan", None)
+        if scan is None or getattr(scan, "screen_array", None) is None:
+            return None
+
+        for base_key, card in self._iter_live_card_slots(state):
+            if getattr(card, "formatted", None):
+                continue
+            number_box = getattr(card, "card_coordinates_value", None)
+            suit_box = getattr(card, "card_coordinates_suit", None)
+            if not number_box or not suit_box:
+                continue
+
+            number_patch_raw = scan._extract_patch(number_box, pad=3)
+            suit_patch_raw = scan._extract_patch(suit_box, pad=3)
+            if self._live_card_patch_is_hand_overlay(scan, card, number_patch_raw):
+                continue
+            if not self._live_card_patch_present(number_patch_raw):
+                continue
+
+            return (
+                base_key,
+                card,
+                self._bgr_patch_to_pil(number_patch_raw),
+                self._bgr_patch_to_pil(suit_patch_raw),
+            )
+        return None
+
+    def _iter_live_card_slots(self, state: ControllerViewState):
+        cards = getattr(getattr(self.controller.game, "table", None), "cards", None)
+        if cards is None:
             return
 
-        self._last_auto_identify_t = now
-        logger.info("auto_identification_cartes declenchee game=%s", game)
-        self._launch_identify_cards(auto=True)
+        for index, card in enumerate(cards.me_cards(), start=1):
+            yield f"player_card_{index}", card
+
+        street = str(state.street or "").upper()
+        expected_board_count = {"FLOP": 3, "TURN": 4, "RIVER": 5}.get(street, 0)
+        for index, card in enumerate(cards.board_cards()[:expected_board_count], start=1):
+            yield f"board_card_{index}", card
+
+    def _live_card_patch_present(self, number_patch) -> bool:
+        from objet.services.card_identifier import is_card_present
+
+        return bool(is_card_present(number_patch, threshold=215, min_ratio=0.04))
+
+    def _live_card_patch_is_hand_overlay(self, scan, card, number_patch) -> bool:
+        template_set = str(getattr(card, "template_set", "") or "").lower()
+        if "hand" not in template_set:
+            return False
+        should_skip = getattr(scan, "_should_skip_for_fold", None)
+        if should_skip is None:
+            return False
+        try:
+            return bool(should_skip(number_patch))
+        except Exception:
+            return False
+
+    def _bgr_patch_to_pil(self, patch):
+        import cv2
+        from PIL import Image
+
+        if len(getattr(patch, "shape", ())) == 2:
+            return Image.fromarray(patch)
+        rgb = cv2.cvtColor(patch, cv2.COLOR_BGR2RGB)
+        return Image.fromarray(rgb)
+
+    def _reload_scan_card_templates(self) -> None:
+        scan = getattr(getattr(self.controller.game, "table", None), "scan", None)
+        template_index = getattr(scan, "template_index", None)
+        if template_index is None:
+            return
+        try:
+            template_index.load()
+        except Exception as exc:
+            logger.warning("rechargement_templates_scan_impossible error=%s", exc)
 
     def _is_tool_running(self, script_name: str, args: list[str]) -> bool:
         try:
@@ -1019,60 +1184,9 @@ class App(tk.Tk):
         )
 
 
-class ProfileItem:
-    def __init__(self, label: str, ok: bool, detail: str) -> None:
-        self.label = label
-        self.ok = ok
-        self.detail = detail
-
-
-def profile_status(
-    game_name: str,
-    config_root: Path | str = CONFIG_ROOT,
-    history_root: Path | str = DEFAULT_PLAYER_HISTORY_DIR,
-) -> list[ProfileItem]:
-    game_dir = Path(config_root) / game_name
-    action_files = ["check.png", "paie.png", "relance.png", "fold.png", "sit_out.png", "play.png"]
-    cards_dir = game_dir / "Cards"
-    cards_png = list(cards_dir.rglob("*.png")) if cards_dir.exists() else []
-    history_item = _history_profile_item(game_name, history_root=history_root)
-    return [
-        _profile_item("Dossier", game_dir, "profil"),
-        _profile_item("Coordinates", game_dir / "coordinates.json", "zones"),
-        _profile_item("Anchor", game_dir / "anchor.png", "ancre"),
-        ProfileItem("Cards", bool(cards_png), f"{len(cards_png)} templates" if cards_png else "templates manquants"),
-        ProfileItem(
-            "Actions",
-            all((game_dir / name).exists() for name in action_files),
-            f"{sum(1 for name in action_files if (game_dir / name).exists())}/{len(action_files)} fichiers",
-        ),
-        history_item,
-    ]
-
-
-def _profile_item(label: str, path: Path, detail: str) -> ProfileItem:
-    return ProfileItem(label, path.exists(), detail if path.exists() else "manquant")
-
-
-def _history_profile_item(game_name: str, *, history_root: Path | str) -> ProfileItem:
-    path = player_history_path(game_name, root_dir=history_root)
-    if not path.exists():
-        return ProfileItem("Historique", True, "0 joueur")
-    try:
-        import json
-
-        with path.open("r", encoding="utf-8") as handle:
-            data = json.load(handle)
-        players = data.get("players", {}) if isinstance(data, dict) else {}
-        count = len(players) if isinstance(players, dict) else 0
-    except Exception:
-        return ProfileItem("Historique", False, "illisible")
-    return ProfileItem("Historique", True, f"{count} joueur(s)")
-
-
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="UI autour de Controller.run_cycle()")
-    parser.add_argument("--interval", type=int, default=1000, help="Intervalle entre deux scans en ms (25..2000)")
+    parser.add_argument("--interval", type=int, default=DEFAULT_SCAN_INTERVAL_MS, help="Intervalle entre deux scans en ms (minimum 25)")
     parser.add_argument("--game", help="Nom du jeu/profil dans config/ (sinon dernier profil utilise)")
     parser.add_argument("--list-games", action="store_true", help="Liste les profils disponibles puis quitte.")
     parser.add_argument("--snapshot", action="store_true", help="Execute un seul scan dans le terminal.")
@@ -1125,334 +1239,6 @@ def main(argv=None) -> None:
         )
         app.mainloop()
         logger.info("fin interface status=closed log=%s", log_path_value(log_file))
-
-
-def available_game_names(config_root: Path | str = CONFIG_ROOT) -> list[str]:
-    root = Path(config_root)
-    if not root.exists():
-        return [DEFAULT_GAME_NAME]
-    names = sorted(
-        path.name
-        for path in root.iterdir()
-        if path.is_dir() and (path / "coordinates.json").exists()
-    )
-    return names or [DEFAULT_GAME_NAME]
-
-
-def load_interface_state(path: Path | str = INTERFACE_STATE_PATH) -> dict[str, object]:
-    state_path = Path(path)
-    try:
-        payload = json.loads(state_path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return {}
-    except Exception as exc:
-        logger.warning("interface_state_lecture_impossible path=%s error=%s", state_path, exc)
-        return {}
-    return payload if isinstance(payload, dict) else {}
-
-
-def save_interface_state(state: dict[str, object], path: Path | str = INTERFACE_STATE_PATH) -> None:
-    state_path = Path(path)
-    try:
-        state_path.parent.mkdir(parents=True, exist_ok=True)
-        state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
-    except Exception as exc:
-        logger.warning("interface_state_ecriture_impossible path=%s error=%s", state_path, exc)
-
-
-def select_initial_game(cli_game: Optional[str], state: dict[str, object], profiles: list[str]) -> str:
-    candidates: list[str] = []
-    if cli_game:
-        candidates.append(cli_game)
-    saved_game = _state_text(state, "game_name")
-    if saved_game:
-        candidates.append(saved_game)
-    candidates.append(DEFAULT_GAME_NAME)
-    candidates.extend(profiles)
-
-    for candidate in candidates:
-        game = candidate.strip()
-        if game and game in profiles:
-            return game
-    return DEFAULT_GAME_NAME
-
-
-def needs_card_identification(state: ControllerViewState) -> bool:
-    if not state.scan_ok:
-        return False
-
-    active_buttons = bool([button for button in state.buttons if button])
-    street = str(state.street or "").upper()
-    hero_cards = _pad_list(state.hero_state or state.hero_scan, 2)
-    hero_known = _count_known_cards(hero_cards)
-    if hero_known < 2 and active_buttons:
-        return True
-    if street != "IDLE" and hero_known < 2 and hero_known > 0:
-        return True
-
-    expected_board_count = {
-        "FLOP": 3,
-        "TURN": 4,
-        "RIVER": 5,
-    }.get(street, 0)
-    if expected_board_count:
-        board_cards = _pad_list(state.board_state or state.board_scan, 5)[:expected_board_count]
-        board_known = _count_known_cards(board_cards)
-        if board_known < expected_board_count and (board_known > 0 or active_buttons):
-            return True
-
-    return False
-
-
-def _count_known_cards(values: list[object]) -> int:
-    return sum(1 for value in values if value not in (None, "", "--"))
-
-
-def _state_text(state: dict[str, object], key: str) -> Optional[str]:
-    value = state.get(key)
-    if isinstance(value, str):
-        text = value.strip()
-        return text or None
-    return None
-
-
-def normalise_game_name(game_name: str) -> str:
-    game = str(game_name).strip()
-    if not game:
-        raise ValueError("game_name is required")
-    return game
-
-
-def build_quick_setup_args(
-    game_name: str,
-    *,
-    config_root: Path | str = CONFIG_ROOT,
-    video: Optional[str] = None,
-    edit_zones: bool = True,
-    extract_frames: bool = True,
-    identify_cards: bool = True,
-    validate_video: bool = True,
-) -> list[str]:
-    args = ["--game", normalise_game_name(game_name), "--config-root", str(Path(config_root))]
-    if video:
-        args += ["--video", str(video)]
-    if not edit_zones:
-        args.append("--skip-zone-editor")
-    if not extract_frames:
-        args.append("--skip-capture")
-    if not identify_cards:
-        args.append("--skip-identify")
-    if not validate_video:
-        args.append("--skip-capture-validation")
-    return args
-
-
-def build_zone_editor_args(game_name: str, *, config_root: Path | str = CONFIG_ROOT) -> list[str]:
-    return build_quick_setup_args(
-        game_name,
-        config_root=config_root,
-        extract_frames=False,
-        identify_cards=False,
-        validate_video=False,
-    )
-
-
-def build_capture_frames_args(
-    game_name: str,
-    video: str,
-    *,
-    config_root: Path | str = CONFIG_ROOT,
-) -> list[str]:
-    game_dir = Path(config_root) / normalise_game_name(game_name)
-    return ["--game-dir", str(game_dir), "--video", str(video)]
-
-
-def build_identify_cards_args(game_name: str) -> list[str]:
-    return ["--game", normalise_game_name(game_name)]
-
-
-def build_validate_cards_args(
-    game_name: str,
-    video: str,
-    *,
-    config_root: Path | str = CONFIG_ROOT,
-) -> list[str]:
-    game = normalise_game_name(game_name)
-    game_dir = Path(config_root) / game
-    return ["--game", game, "--game-dir", str(game_dir), "--video", str(video)]
-
-
-def script_path_for(script_name: str) -> Path:
-    path = SCRIPTS_ROOT / script_name
-    if not path.is_file():
-        raise FileNotFoundError(f"{path} n'existe pas.")
-    return path
-
-
-def _subprocess_creation_flags() -> int:
-    return getattr(subprocess, "CREATE_NEW_CONSOLE", 0) if sys.platform.startswith("win") else 0
-
-
-def build_interface_launch_command(
-    command: list[str],
-    *,
-    cwd: Path | str = PROJECT_ROOT,
-    launcher_dir: Path | str | None = None,
-) -> list[str]:
-    if not sys.platform.startswith("win"):
-        return command
-    launcher_root = Path(launcher_dir) if launcher_dir is not None else PROJECT_ROOT / "logs" / "tool_launchers"
-    launcher_root.mkdir(parents=True, exist_ok=True)
-    launcher_path = launcher_root / f"tool_{int(time.time() * 1000)}_{abs(hash(tuple(command))) & 0xffff:x}.cmd"
-    command_line = subprocess.list2cmdline([str(part) for part in command])
-    launcher_path.write_text(
-        "\n".join(
-            [
-                "@echo off",
-                "setlocal",
-                f'cd /d "{Path(cwd)}"',
-                command_line,
-                "set tool_exit=%ERRORLEVEL%",
-                "echo.",
-                "echo Termine avec code %tool_exit% . Appuie sur une touche pour fermer cette fenetre.",
-                "pause >nul",
-                "exit /b %tool_exit%",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    return ["cmd.exe", "/C", str(launcher_path)]
-
-
-def format_command(command: list[str]) -> str:
-    return " ".join(_quote_command_part(part) for part in command)
-
-
-def _quote_command_part(part: str) -> str:
-    text = str(part)
-    if any(char.isspace() for char in text):
-        return f'"{text}"'
-    return text
-
-
-def _fmt_optional_float(value: Optional[float]) -> str:
-    if value is None:
-        return "None"
-    return f"{value:.1f}"
-
-
-def _display_value(value: object) -> str:
-    if value is None:
-        return "---"
-    return str(value)
-
-
-def _display_percent(value: object) -> str:
-    if isinstance(value, (int, float)):
-        return f"{value * 100:.1f}%"
-    return _display_value(value)
-
-
-def _display_card(value: object) -> str:
-    if value is None:
-        return "--"
-    return str(value)
-
-
-def _target_button_bbox(target_button: Optional[dict[str, object]]) -> Optional[tuple[int, int, int, int]]:
-    if not target_button:
-        return None
-    bbox = target_button.get("bbox")
-    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
-        return None
-    return tuple(int(value) for value in bbox)
-
-
-def _decision_explanation(action: str, reason: str) -> str:
-    explanations = {
-        "new_party_pending_reset": "Nouvelle main detectee, attente du reset interne.",
-        "hero_cards_not_detected_yet": "Cartes hero incompletes, pas de decision fiable.",
-        "not_buttons": "Pas encore de bouton actif detecte.",
-        "equity_not_ready": "Equity pas encore calculee.",
-        "equity_required_not_ready": "Equity minimale pas encore calculee.",
-        "free_option_strong_equity": "Option gratuite et main forte: relance proposee.",
-        "free_option_no_call_needed": "Aucun montant a payer: check propose.",
-        "negative_call_ev": "Call non rentable: fold propose.",
-        "positive_edge_raise": "Relance proposee: equity nettement au-dessus de l'equity minimale.",
-        "call_profitable_or_close": "Call rentable ou proche du seuil.",
-    }
-    detail = explanations.get(reason, reason)
-    return f"{detail} ({reason})" if reason and detail != reason else detail
-
-
-def _pad_list(values: list[object], size: int) -> list[object]:
-    return list(values[:size]) + [None] * max(0, size - len(values))
-
-
-def _style_card_label(label: tk.Label, value: object) -> None:
-    text = _display_card(value)
-    if text == "--":
-        label.configure(bg="#f3f4f6", fg="#6b7280")
-        return
-    if "♥" in text or "♦" in text:
-        label.configure(bg="#fff1f2", fg="#be123c")
-        return
-    if "♣" in text:
-        label.configure(bg="#ecfdf5", fg="#047857")
-        return
-    if "♠" in text:
-        label.configure(bg="#eff6ff", fg="#1d4ed8")
-        return
-    label.configure(bg="#ffffff", fg="#111827")
-
-
-def _style_metric_label(label: Optional[tk.Label], value: object, *, positive_good: bool) -> None:
-    if label is None:
-        return
-    number = _as_number(value)
-    if number is None:
-        label.configure(bg="#f3f4f6", fg="#374151")
-        return
-    good = number >= 0 if positive_good else number <= 0
-    label.configure(
-        bg="#dcfce7" if good else "#fee2e2",
-        fg="#166534" if good else "#991b1b",
-    )
-
-
-def _style_equity_label(label: Optional[tk.Label], value: object) -> None:
-    if label is None:
-        return
-    number = _as_number(value)
-    if number is None:
-        label.configure(bg="#f3f4f6", fg="#374151")
-    elif number >= 0.55:
-        label.configure(bg="#dcfce7", fg="#166534")
-    elif number >= 0.35:
-        label.configure(bg="#fef9c3", fg="#854d0e")
-    else:
-        label.configure(bg="#fee2e2", fg="#991b1b")
-
-
-def _as_number(value: object) -> Optional[float]:
-    if isinstance(value, (int, float)):
-        return float(value)
-    try:
-        return float(str(value))
-    except (TypeError, ValueError):
-        return None
-
-
-def _lighten_hex(color: str, amount: float) -> str:
-    color = color.lstrip("#")
-    red = int(color[0:2], 16)
-    green = int(color[2:4], 16)
-    blue = int(color[4:6], 16)
-    red = min(255, int(red + (255 - red) * amount))
-    green = min(255, int(green + (255 - green) * amount))
-    blue = min(255, int(blue + (255 - blue) * amount))
-    return f"#{red:02x}{green:02x}{blue:02x}"
 
 
 if __name__ == "__main__":
