@@ -51,8 +51,12 @@ class Decision:
 
         # No money to add: never CALL. Check weak/medium hands, raise strong ones.
         if to_call <= 0:
-            if aggressive_action and equity >= self.FREE_RAISE_EQUITY:
+            if free_action and aggressive_action and equity >= self.FREE_RAISE_EQUITY:
                 return _log_decision(DecisionResult(action="RAISE", reason="free_option_strong_equity"))
+            if free_action:
+                return _log_decision(DecisionResult(action="CHECK", reason="free_option_no_call_needed"))
+            if _has_explicit_active_buttons(buttons):
+                return _log_decision(DecisionResult(action="WAIT", reason="call_amount_not_detected"))
             return _log_decision(DecisionResult(action="CHECK", reason="free_option_no_call_needed"))
 
         if equity_required is None:
@@ -100,6 +104,10 @@ def _aggressive_action_available(buttons) -> bool:
         getattr(button, "enabled", False) and getattr(button, "etat", "").lower() in {"mise", "relance", "all-in"}
         for button in _iter_buttons(buttons)
     )
+
+
+def _has_explicit_active_buttons(buttons) -> bool:
+    return any(getattr(button, "enabled", False) for button in _iter_buttons(buttons))
 
 
 def _iter_buttons(buttons):

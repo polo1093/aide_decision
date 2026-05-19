@@ -37,6 +37,18 @@ def test_min_value_ignores_disabled_buttons() -> None:
     assert buttons.min_value() == 2.0
 
 
+def test_min_value_handles_large_chip_amounts() -> None:
+    buttons = Buttons(
+        button=[
+            Button(enabled=True, etat="relance", value=4760.0),
+            Button(enabled=True, etat="paie", value=4520.0),
+            Button(enabled=True, etat="fold", value=0.0),
+        ]
+    )
+
+    assert buttons.min_value() == 4520.0
+
+
 def test_check_button_makes_min_value_free_even_with_bet_button() -> None:
     buttons = Buttons(
         button=[

@@ -861,6 +861,7 @@ class App(tk.Tk):
                 template_set=getattr(card, "template_set", None),
                 interactive=True,
                 force_all=False,
+                parent=self,
             )
         except Exception as exc:
             self._handle_controller_exception(context=f"Identification live {base_key}", error=exc)

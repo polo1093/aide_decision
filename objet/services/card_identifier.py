@@ -94,6 +94,7 @@ class _SingleCardDialog:
         number_img: Image.Image,
         suit_img: Image.Image,
         *,
+        parent: Optional[tk.Misc] = None,
         missing_number: bool,
         missing_suit: bool,
         number_choices: Sequence[str],
@@ -104,9 +105,12 @@ class _SingleCardDialog:
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
 
-        self.root = ctk.CTk()
+        self._owns_root = parent is None
+        self.root = ctk.CTk() if self._owns_root else ctk.CTkToplevel(parent)
         self.root.title("Identifier la carte")
         self.root.geometry("560x480")
+        if parent is not None:
+            self.root.transient(parent)
 
         # action: "ok" | "cancel" | "delete"
         self.action: str = "cancel"
@@ -124,7 +128,7 @@ class _SingleCardDialog:
         top.pack(fill="both", expand=True, padx=12, pady=12)
 
         preview = _make_preview(number_img, suit_img)
-        self.photo = ImageTk.PhotoImage(preview)
+        self.photo = ImageTk.PhotoImage(preview, master=self.root)
         self.img_lbl = ctk.CTkLabel(top, image=self.photo, text="", compound="top")
         self.img_lbl.pack(pady=8)
 
@@ -166,7 +170,12 @@ class _SingleCardDialog:
         )
 
     def run(self) -> Optional[Tuple[str, str]]:
-        self.root.mainloop()
+        self.root.grab_set()
+        self.root.focus_force()
+        if self._owns_root:
+            self.root.mainloop()
+        else:
+            self.root.wait_window()
         return self.result
 
     def _on_save(self) -> None:
@@ -289,6 +298,7 @@ class CardIdentifier:
         template_set: Optional[str] = None,
         interactive: bool = True,
         force_all: bool = False,
+        parent: Optional[tk.Misc] = None,
     ) -> IdentifyResult:
         # 1) Trim + reco
         tpl_set = self._normalise_template_set(template_set)
@@ -360,6 +370,7 @@ class CardIdentifier:
         dialog = _SingleCardDialog(
             trimmed_number,
             trimmed_suit,
+            parent=parent,
             missing_number=missing_number,
             missing_suit=missing_suit,
             number_choices=self.number_choices,
@@ -448,6 +459,7 @@ class CardIdentifier:
         *,
         interactive: bool = True,
         force_all: bool = False,
+        parent: Optional[tk.Misc] = None,
     ) -> IdentifyResult:
         pairs = collect_card_patches(table_img.convert("RGB"), regions, pad=0)
         card_patch = pairs.get(base_key)
@@ -472,4 +484,5 @@ class CardIdentifier:
             template_set=tpl_set,
             interactive=interactive,
             force_all=force_all,
+            parent=parent,
         )

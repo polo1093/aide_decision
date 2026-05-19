@@ -75,12 +75,12 @@ class Buttons:
         if self.has_free_action():
             return 0.0
 
-        min = 1000
+        min_value = float("inf")
         for b in self.button :  
             if b.is_activate() and b.value != 0:
-                if b.value < min:
-                    min = b.value      
-        return 0 if min == 1000 else min
+                if b.value < min_value:
+                    min_value = b.value
+        return 0 if min_value == float("inf") else min_value
     
     def reset_all(self) -> None:
         """Réinitialise l'ensemble des boutons."""

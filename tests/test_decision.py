@@ -167,8 +167,47 @@ def test_call_when_edge_is_close() -> None:
     assert result.reason == "call_profitable_or_close"
 
 
+def test_no_check_recommendation_without_check_button_when_amount_missing() -> None:
+    buttons = Buttons(
+        button=[
+            Button(enabled=True, etat="relance", value=0.0),
+            Button(enabled=True, etat="paie", value=0.0),
+            Button(enabled=True, etat="fold", value=0.0),
+        ]
+    )
+    game = DummyGame(_cards_state("J♦", "10♦"), buttons=buttons)
+    game.etat.chance_win = 0.76
+    decision = Decision()
+
+    result = decision.decide(game)
+
+    assert result.action == "WAIT"
+    assert result.reason == "call_amount_not_detected"
+
+
+def test_paid_position_with_no_check_uses_call_amount() -> None:
+    buttons = Buttons(
+        button=[
+            Button(enabled=True, etat="relance", value=4760.0),
+            Button(enabled=True, etat="paie", value=4520.0),
+            Button(enabled=True, etat="fold", value=0.0),
+        ]
+    )
+    game = DummyGame(_cards_state("J♦", "10♦"), buttons=buttons)
+    game.etat.Call_max = 322.0
+    game.etat.chance_win = 0.244
+    game.etat.equity_required = 0.5
+    decision = Decision()
+
+    result = decision.decide(game)
+
+    assert result.action == "FOLD"
+    assert result.reason == "negative_call_ev"
+
+
 def test_check_when_action_is_free_and_equity_is_not_strong() -> None:
-    game = DummyGame(_cards_state("AS", "KS"), buttons=DummyButtons(min_value=0.0))
+    buttons = Buttons(button=[Button(enabled=True, etat="check", value=0.0)])
+    game = DummyGame(_cards_state("AS", "KS"), buttons=buttons)
     game.etat.chance_win = 0.40
     decision = Decision()
 

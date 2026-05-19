@@ -336,6 +336,7 @@ def _decision_explanation(action: str, reason: str) -> str:
         "new_party_pending_reset": "Nouvelle main detectee, attente du reset interne.",
         "hero_cards_not_detected_yet": "Cartes hero incompletes, pas de decision fiable.",
         "not_buttons": "Pas encore de bouton actif detecte.",
+        "call_amount_not_detected": "Boutons actifs detectes, mais aucun check ni montant a payer fiable.",
         "equity_not_ready": "Equity pas encore calculee.",
         "equity_required_not_ready": "Equity minimale pas encore calculee.",
         "free_option_strong_equity": "Option gratuite et main forte: relance proposee.",
