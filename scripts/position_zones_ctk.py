@@ -301,6 +301,11 @@ class ZoneEditorCTK:
             )
 
     # ---------- Dessin ----------
+    def _overlay_stroke_width(self) -> int:
+        """Keep detection rectangles readable when the image is displayed smaller."""
+        scale = self.scale if self.scale > 0 else 1.0
+        return max(2, min(7, int(round(2.0 / scale))))
+
     def _redraw_all(self):
         self.canvas.delete("all")
         self.rect_items.clear()
@@ -317,6 +322,7 @@ class ZoneEditorCTK:
             return
 
         s = self.scale
+        stroke_width = self._overlay_stroke_width()
         for key, r in self.project.regions.items():
             group = r.get("group", "")
             w, h = self.project.get_group_size(group)
@@ -324,7 +330,7 @@ class ZoneEditorCTK:
             dx0, dy0 = int(x * s), int(y * s)
             dx1, dy1 = int((x + w) * s), int((y + h) * s)
             rid = self.canvas.create_rectangle(
-                dx0, dy0, dx1, dy1, outline="#0ea5e9", width=2
+                dx0, dy0, dx1, dy1, outline="#0ea5e9", width=stroke_width
             )
             tid = self.canvas.create_text(
                 dx0 + 6,
@@ -447,6 +453,7 @@ class ZoneEditorCTK:
 
     def _redraw_group(self, group: str):
         s = self.scale if self.scale else 1.0
+        stroke_width = self._overlay_stroke_width()
         keys = [k for k, r in self.project.regions.items() if r.get("group") == group]
         for k in keys:
             r = self.project.regions[k]
@@ -458,6 +465,7 @@ class ZoneEditorCTK:
             tid = self.text_items.get(k)
             if rid:
                 self.canvas.coords(rid, dx0, dy0, dx1, dy1)
+                self.canvas.itemconfigure(rid, width=stroke_width)
             if tid:
                 self.canvas.coords(tid, dx0 + 6, dy0 + 6)
 
