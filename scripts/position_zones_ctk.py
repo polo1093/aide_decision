@@ -30,6 +30,8 @@ from objet.services.game import Game
 from zone_project import ZoneProject
 
 APP_TITLE = "Zone Editor (CustomTkinter)"
+CARD_IDENTIFICATION_TRIM_PIXELS = 6
+CARD_REGION_GROUP_MARKERS = ("card_number", "card_symbol")
 
 
 class ZoneEditorCTK:
@@ -306,6 +308,20 @@ class ZoneEditorCTK:
         scale = self.scale if self.scale > 0 else 1.0
         return max(2, min(7, int(round(2.0 / scale))))
 
+    def _region_stroke_width(self, group: str) -> int:
+        width = self._overlay_stroke_width()
+        if not self._is_card_group(group):
+            return width
+
+        scale = self.scale if self.scale > 0 else 1.0
+        card_trim_width = int(round(CARD_IDENTIFICATION_TRIM_PIXELS * scale))
+        return max(width, card_trim_width)
+
+    @staticmethod
+    def _is_card_group(group: str) -> bool:
+        group_l = str(group or "").lower()
+        return any(marker in group_l for marker in CARD_REGION_GROUP_MARKERS)
+
     def _redraw_all(self):
         self.canvas.delete("all")
         self.rect_items.clear()
@@ -322,13 +338,13 @@ class ZoneEditorCTK:
             return
 
         s = self.scale
-        stroke_width = self._overlay_stroke_width()
         for key, r in self.project.regions.items():
             group = r.get("group", "")
             w, h = self.project.get_group_size(group)
             x, y = r["top_left"]
             dx0, dy0 = int(x * s), int(y * s)
             dx1, dy1 = int((x + w) * s), int((y + h) * s)
+            stroke_width = self._region_stroke_width(group)
             rid = self.canvas.create_rectangle(
                 dx0, dy0, dx1, dy1, outline="#0ea5e9", width=stroke_width
             )
@@ -453,7 +469,7 @@ class ZoneEditorCTK:
 
     def _redraw_group(self, group: str):
         s = self.scale if self.scale else 1.0
-        stroke_width = self._overlay_stroke_width()
+        stroke_width = self._region_stroke_width(group)
         keys = [k for k, r in self.project.regions.items() if r.get("group") == group]
         for k in keys:
             r = self.project.regions[k]

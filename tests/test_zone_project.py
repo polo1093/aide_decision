@@ -10,6 +10,7 @@ if str(SCRIPTS_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_ROOT))
 
 from zone_project import ZoneProject
+from position_zones_ctk import CARD_IDENTIFICATION_TRIM_PIXELS, ZoneEditorCTK
 
 
 def test_find_expected_image_prefers_training_screen_over_button_template(tmp_path: Path) -> None:
@@ -38,3 +39,12 @@ def test_export_payload_preserves_region_metadata() -> None:
     payload = project.export_payload()
 
     assert payload["regions"]["player_card_1_symbol"]["template_set"] == "hand"
+
+
+def test_zone_editor_uses_identification_trim_for_card_stroke_width() -> None:
+    editor = ZoneEditorCTK.__new__(ZoneEditorCTK)
+    editor.scale = 2.0
+
+    assert editor._region_stroke_width("board_card_number") == CARD_IDENTIFICATION_TRIM_PIXELS * 2
+    assert editor._region_stroke_width("player_card_symbol") == CARD_IDENTIFICATION_TRIM_PIXELS * 2
+    assert editor._region_stroke_width("action_button") == 2
