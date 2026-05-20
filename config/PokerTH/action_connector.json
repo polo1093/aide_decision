@@ -1,0 +1,23 @@
+{
+  "enabled": true,
+  "raise_amount": {
+    "enabled": true,
+    "input_mode": "numpad",
+    "press_interval": 0.015,
+    "clear_keys": [],
+    "format": {
+      "round_to": 0,
+      "decimal_separator": ".",
+      "trim_trailing_zeros": true
+    },
+    "focus_before_typing": {
+      "enabled": true,
+      "box": [
+        2010,
+        555,
+        80,
+        55
+      ]
+    }
+  }
+}

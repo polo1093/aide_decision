@@ -28,6 +28,7 @@ from launch_support import (
     DEFAULT_SCAN_INTERVAL_MS,
     DEFAULT_WINDOW_GEOMETRY,
     PROJECT_ROOT,
+    TargetActionCommand,
     VIDEO_FILETYPES,
     ProfileItem,
     _decision_explanation,
@@ -51,6 +52,7 @@ from launch_support import (
     build_validate_cards_args,
     build_zone_editor_args,
     click_target_button_box,
+    enter_raise_amount_for_game,
     format_command,
     load_interface_state,
     needs_card_identification,
@@ -92,7 +94,7 @@ class App(tk.Tk):
         self._scan_in_flight = False
         self._scan_result_queue: "queue.Queue[tuple[str, object, float]]" = queue.Queue()
         self._scan_poll_after_id: Optional[str] = None
-        self._click_queue: "queue.Queue[Optional[tuple[int, int, int, int]]]" = queue.Queue()
+        self._click_queue: "queue.Queue[Optional[TargetActionCommand]]" = queue.Queue()
         self._click_worker_stop = threading.Event()
         self._click_worker = threading.Thread(
             target=self._click_worker_loop,
@@ -1174,6 +1176,12 @@ class App(tk.Tk):
             self.var_click_status.set("clic: pret")
             return
 
+        if state.decision_action == "FOLD" and not self._fold_has_positive_call(state):
+            self._last_click_signature = None
+            self._last_click_queued_at = 0.0
+            self.var_click_status.set("clic: fold bloque sans call")
+            return
+
         signature = self._click_signature(state, click_box)
         now = time.monotonic()
         elapsed = now - self._last_click_queued_at
@@ -1182,8 +1190,15 @@ class App(tk.Tk):
 
         self._last_click_signature = signature
         self._last_click_queued_at = now
-        self._click_queue.put(click_box)
-        self.var_click_status.set(f"clic: queue {click_box}")
+        command = TargetActionCommand(
+            click_box=click_box,
+            game_name=state.game_name,
+            decision_action=state.decision_action,
+            raise_amount=self._target_raise_amount(state),
+            runtime_offset=self._runtime_region_offset(),
+        )
+        self._click_queue.put(command)
+        self.var_click_status.set(self._queued_click_status(command))
 
     def _click_signature(
         self,
@@ -1194,6 +1209,7 @@ class App(tk.Tk):
         return (
             state.hand_id,
             state.decision_action,
+            state.raise_amount,
             target.get("label"),
             target.get("state"),
             click_box,
@@ -1202,18 +1218,34 @@ class App(tk.Tk):
     def _click_worker_loop(self) -> None:
         while not self._click_worker_stop.is_set():
             try:
-                click_box = self._click_queue.get(timeout=0.2)
+                command = self._click_queue.get(timeout=0.2)
             except queue.Empty:
                 continue
-            if click_box is None:
+            if command is None:
                 continue
             try:
-                self._left_click_box_center(click_box)
+                self._execute_target_action(command)
             except Exception as exc:
-                logger.exception("erreur_clic_bouton_cible box=%s", click_box)
+                logger.exception("erreur_clic_bouton_cible command=%s", command)
                 self.after(0, lambda exc=exc: self.var_click_status.set(f"clic: erreur {exc}"))
             else:
-                self.after(0, lambda box=click_box: self.var_click_status.set(f"clic: fait {box}"))
+                self.after(0, lambda command=command: self.var_click_status.set(f"clic: fait {command.click_box}"))
+
+    def _execute_target_action(self, command: TargetActionCommand) -> None:
+        if command.decision_action == "RAISE" and command.raise_amount is not None:
+            typed = enter_raise_amount_for_game(
+                command.game_name,
+                command.raise_amount,
+                runtime_offset=command.runtime_offset,
+            )
+            if typed:
+                logger.info(
+                    "raise_amount_envoye game=%s amount=%s text=%s",
+                    command.game_name,
+                    command.raise_amount,
+                    typed,
+                )
+        self._left_click_box_center(command.click_box)
 
     def _left_click_box_center(self, click_box: tuple[int, int, int, int]) -> None:
         x, y, width, height = click_box
@@ -1221,6 +1253,26 @@ class App(tk.Tk):
             return
 
         click_target_button_box((x, y, width, height))
+
+    def _target_raise_amount(self, state: ControllerViewState) -> Optional[float]:
+        if state.decision_action != "RAISE":
+            return None
+        try:
+            amount = float(state.raise_amount)
+        except (TypeError, ValueError):
+            return None
+        return amount if amount > 0 else None
+
+    def _fold_has_positive_call(self, state: ControllerViewState) -> bool:
+        try:
+            return float(state.to_call) > 0
+        except (TypeError, ValueError):
+            return False
+
+    def _queued_click_status(self, command: TargetActionCommand) -> str:
+        if command.decision_action == "RAISE" and command.raise_amount is not None:
+            return f"clic: queue raise {command.raise_amount} {command.click_box}"
+        return f"clic: queue {command.click_box}"
 
     def _stop_click_worker(self) -> None:
         self._click_worker_stop.set()

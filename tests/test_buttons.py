@@ -30,7 +30,7 @@ def test_min_value_ignores_disabled_buttons() -> None:
     buttons = Buttons(
         button=[
             Button(enabled=False, value=0.5),
-            Button(enabled=True, value=2.0),
+            Button(enabled=True, etat="paie", value=2.0),
         ]
     )
 
@@ -59,6 +59,19 @@ def test_check_button_makes_min_value_free_even_with_bet_button() -> None:
 
     assert buttons.has_free_action() is True
     assert buttons.has_aggressive_action() is True
+    assert buttons.min_value() == 0.0
+
+
+def test_min_value_ignores_aggressive_buttons_when_call_is_absent() -> None:
+    buttons = Buttons(
+        button=[
+            Button(enabled=True, etat="fold", value=0.0),
+            Button(enabled=True, etat="mise", value=120.0),
+            Button(enabled=True, etat="relance", value=240.0),
+        ]
+    )
+
+    assert buttons.has_call_action() is False
     assert buttons.min_value() == 0.0
 
 

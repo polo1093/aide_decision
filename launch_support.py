@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 import subprocess
 import sys
@@ -11,6 +12,7 @@ import tkinter as tk
 from typing import Optional
 
 from objet.services.controller import ControllerViewState
+from objet.services.action_connector import enter_raise_amount_for_game as _enter_raise_amount_for_game
 from objet.services.player_history import DEFAULT_PLAYER_HISTORY_DIR, player_history_path
 from objet.utils.logging_config import get_logger
 
@@ -31,6 +33,15 @@ VIDEO_FILETYPES = (
     ("Videos", "*.avi *.mp4 *.mkv *.mov"),
     ("Tous les fichiers", "*.*"),
 )
+
+
+@dataclass(frozen=True)
+class TargetActionCommand:
+    click_box: tuple[int, int, int, int]
+    game_name: str
+    decision_action: str
+    raise_amount: Optional[float] = None
+    runtime_offset: tuple[int, int] = (0, 0)
 
 
 class ProfileItem:
@@ -352,6 +363,20 @@ def click_target_button_box(click_box: tuple[int, int, int, int]) -> object:
     )
 
 
+def enter_raise_amount_for_game(
+    game_name: str,
+    amount: object,
+    *,
+    runtime_offset: tuple[int, int] = (0, 0),
+) -> Optional[str]:
+    return _enter_raise_amount_for_game(
+        game_name,
+        amount,
+        config_root=CONFIG_ROOT,
+        runtime_offset=runtime_offset,
+    )
+
+
 def _decision_explanation(action: str, reason: str) -> str:
     explanations = {
         "new_party_pending_reset": "Nouvelle main detectee, attente du reset interne.",
@@ -363,6 +388,7 @@ def _decision_explanation(action: str, reason: str) -> str:
         "free_option_strong_equity": "Option gratuite et main forte: relance proposee.",
         "free_option_no_call_needed": "Aucun montant a payer: check propose.",
         "negative_call_ev": "Call non rentable: fold propose.",
+        "small_bet_value_protection": "Petite mise adverse: relance de value/protection proposee.",
         "positive_edge_raise": "Relance proposee: equity nettement au-dessus de l'equity minimale.",
         "call_profitable_or_close": "Call rentable ou proche du seuil.",
     }

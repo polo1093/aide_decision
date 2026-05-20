@@ -26,7 +26,26 @@ class Decision:
     # Monte Carlo has variance, so a tiny positive edge is not enough to raise.
     FOLD_EDGE: float = -0.03
     RAISE_EDGE: float = 0.08
+    PAID_RAISE_EDGE: float = 0.22
     FREE_RAISE_EQUITY: float = 0.65
+    FREE_RAISE_EQUITY_BY_STREET = {
+        "PREFLOP": 0.70,
+        "FLOP": 0.72,
+        "TURN": 0.76,
+        "RIVER": 0.82,
+    }
+    PAID_RAISE_EQUITY_BY_STREET = {
+        "PREFLOP": 0.78,
+        "FLOP": 0.80,
+        "TURN": 0.84,
+        "RIVER": 0.90,
+    }
+    SMALL_BET_MAX_POT_RATIO: float = 0.25
+    SMALL_BET_RAISE_EDGE: float = 0.18
+    SMALL_BET_RAISE_EQUITY_BY_STREET = {
+        "FLOP": 0.54,
+        "TURN": 0.58,
+    }
 
     def decide(self, game: Game) -> DecisionResult:
         """Return the recommended action for the hero based on the current state."""
@@ -51,8 +70,14 @@ class Decision:
 
         # No money to add: never CALL. Check weak/medium hands, raise strong ones.
         if to_call <= 0:
-            if free_action and aggressive_action and equity >= self.FREE_RAISE_EQUITY:
-                return _log_decision(DecisionResult(action="RAISE", reason="free_option_strong_equity"))
+            if free_action and aggressive_action and equity >= self._free_raise_equity_threshold(game):
+                return _log_decision(
+                    DecisionResult(
+                        action="RAISE",
+                        reason="free_option_strong_equity",
+                        raise_amount=_recommended_raise_amount(game, buttons),
+                    )
+                )
             if free_action:
                 return _log_decision(DecisionResult(action="CHECK", reason="free_option_no_call_needed"))
             if _has_explicit_active_buttons(buttons):
@@ -75,10 +100,66 @@ class Decision:
         if call_max < to_call or edge < self.FOLD_EDGE:
             return _log_decision(DecisionResult(action="FOLD", reason="negative_call_ev"))
 
-        if edge >= self.RAISE_EDGE:
-            return _log_decision(DecisionResult(action="RAISE", reason="positive_edge_raise"))
+        if self._should_fold_river_board_only_hand(game, to_call=to_call):
+            return _log_decision(DecisionResult(action="FOLD", reason="river_board_only_big_bet"))
+
+        if self._can_value_raise_paid_pot(game, equity=equity, edge=edge):
+            return _log_decision(
+                DecisionResult(
+                    action="RAISE",
+                    reason="positive_edge_raise",
+                    raise_amount=_recommended_raise_amount(game, buttons),
+                )
+            )
+
+        if self._can_raise_small_bet_for_value(game, equity=equity, edge=edge, to_call=to_call):
+            return _log_decision(
+                DecisionResult(
+                    action="RAISE",
+                    reason="small_bet_value_protection",
+                    raise_amount=_recommended_raise_amount(game, buttons),
+                )
+            )
         
         return _log_decision(DecisionResult(action="CALL", reason="call_profitable_or_close"))
+
+    def _free_raise_equity_threshold(self, game: Game) -> float:
+        street = _game_street(game)
+        return self.FREE_RAISE_EQUITY_BY_STREET.get(street, self.FREE_RAISE_EQUITY)
+
+    def _can_value_raise_paid_pot(self, game: Game, *, equity: float, edge: float) -> bool:
+        if edge < max(self.RAISE_EDGE, self.PAID_RAISE_EDGE):
+            return False
+        street = _game_street(game)
+        threshold = self.PAID_RAISE_EQUITY_BY_STREET.get(street, 0.84)
+        return equity >= threshold
+
+    def _can_raise_small_bet_for_value(
+        self,
+        game: Game,
+        *,
+        equity: float,
+        edge: float,
+        to_call: float,
+    ) -> bool:
+        street = _game_street(game)
+        threshold = self.SMALL_BET_RAISE_EQUITY_BY_STREET.get(street)
+        if threshold is None:
+            return False
+        if equity < threshold or edge < self.SMALL_BET_RAISE_EDGE:
+            return False
+        pot = _as_positive_float(getattr(game.etat, "pot", None))
+        if pot is None:
+            return False
+        return (to_call / pot) <= self.SMALL_BET_MAX_POT_RATIO
+
+    def _should_fold_river_board_only_hand(self, game: Game, *, to_call: float) -> bool:
+        if _game_street(game) != "RIVER":
+            return False
+        pot = _as_positive_float(getattr(game.etat, "pot", None))
+        if pot is None or pot <= 0 or (to_call / pot) < 0.65:
+            return False
+        return _hero_uses_no_private_card(game)
 
 
 def _log_decision(result: DecisionResult) -> DecisionResult:
@@ -108,6 +189,107 @@ def _aggressive_action_available(buttons) -> bool:
 
 def _has_explicit_active_buttons(buttons) -> bool:
     return any(getattr(button, "enabled", False) for button in _iter_buttons(buttons))
+
+
+def _game_street(game: Game) -> str:
+    return str(getattr(game, "street", "") or "").upper()
+
+
+def _recommended_raise_amount(game: Game, buttons) -> Optional[float]:
+    pot = _as_positive_float(getattr(game.etat, "pot", None))
+    to_call = _call_button_value(buttons)
+    amount = _pot_sized_raise_amount(pot=pot, to_call=to_call, street=_game_street(game))
+    if amount is None:
+        amount = _as_positive_float(getattr(game.etat, "montant_a_jouer", None))
+    if amount is None:
+        amount = _as_positive_float(getattr(game.etat, "Call_max", None))
+    min_raise = _min_aggressive_button_value(buttons)
+    if amount is None:
+        return min_raise
+    if min_raise is not None and not _looks_like_preset_button(min_raise, pot):
+        amount = max(amount, min_raise)
+    return _round_chip_amount(amount)
+
+
+def _pot_sized_raise_amount(
+    *,
+    pot: Optional[float],
+    to_call: float,
+    street: str,
+) -> Optional[float]:
+    if pot is None or pot <= 0:
+        return None
+    if to_call > 0:
+        ratio = 0.62 if street in {"FLOP", "TURN"} else 0.50
+        return max(to_call * 3.0, pot * ratio)
+    ratio_by_street = {
+        "PREFLOP": 0.55,
+        "FLOP": 0.66,
+        "TURN": 0.66,
+        "RIVER": 0.50,
+    }
+    return pot * ratio_by_street.get(street, 0.60)
+
+
+def _call_button_value(buttons) -> float:
+    value = _as_positive_float(getattr(buttons, "min_value", lambda: 0.0)())
+    return value or 0.0
+
+
+def _looks_like_preset_button(value: float, pot: Optional[float]) -> bool:
+    return pot is not None and pot > 0 and value > pot * 2.5
+
+
+def _round_chip_amount(amount: float) -> float:
+    if amount >= 100:
+        return float(round(amount / 20.0) * 20)
+    if amount >= 20:
+        return float(round(amount / 10.0) * 10)
+    return float(round(amount, 2))
+
+
+def _min_aggressive_button_value(buttons) -> Optional[float]:
+    values = [
+        value
+        for button in _iter_buttons(buttons)
+        if getattr(button, "enabled", False)
+        and str(getattr(button, "etat", "")).lower() in {"mise", "relance", "all-in"}
+        for value in [_as_positive_float(getattr(button, "value", None))]
+        if value is not None
+    ]
+    return min(values) if values else None
+
+
+def _as_positive_float(value: object) -> Optional[float]:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number <= 0:
+        return None
+    return number
+
+
+def _hero_uses_no_private_card(game: Game) -> bool:
+    try:
+        from pokereval.hand_evaluator import HandEvaluator
+    except Exception:
+        return False
+
+    cards = getattr(game.etat, "cards", None)
+    if cards is None:
+        return False
+    hero_cards = [getattr(card, "poker_card", None) for card in cards.me_cards()]
+    board_cards = [
+        getattr(card, "poker_card", None)
+        for card in cards.board_cards()
+        if getattr(card, "formatted", None)
+    ]
+    if len(hero_cards) != 2 or len(board_cards) != 5:
+        return False
+    if any(card is None for card in [*hero_cards, *board_cards]):
+        return False
+    return HandEvaluator.Seven.evaluate_rank([*hero_cards, *board_cards]) == HandEvaluator.Five.evaluate_rank(board_cards)
 
 
 def _iter_buttons(buttons):

@@ -71,13 +71,16 @@ class Buttons:
     def has_aggressive_action(self) -> bool:
         return self.has_active_state("mise", "relance", "all-in")
 
+    def has_call_action(self) -> bool:
+        return self.has_active_state("paie")
+
     def min_value(self)-> float:
         if self.has_free_action():
             return 0.0
 
         min_value = float("inf")
         for b in self.button :  
-            if b.is_activate() and b.value != 0:
+            if b.is_activate() and b.etat.lower() == "paie" and b.value != 0:
                 if b.value < min_value:
                     min_value = b.value
         return 0 if min_value == float("inf") else min_value
