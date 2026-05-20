@@ -1,6 +1,7 @@
 """Tests for launcher tool command helpers."""
 from __future__ import annotations
 
+import queue
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,6 +16,7 @@ from launch import (
     build_quick_setup_args,
     build_validate_cards_args,
     build_zone_editor_args,
+    click_target_button_box,
     format_command,
     load_interface_state,
     needs_card_identification,
@@ -297,3 +299,148 @@ def test_live_unread_card_selects_visible_missing_hero_card() -> None:
     assert card is missing_card
     assert number_patch == ("patch", (10, 20, 30, 40), 3)
     assert suit_patch == ("patch", (50, 60, 70, 80), 3)
+
+
+def test_target_button_screen_bbox_applies_runtime_region_offset() -> None:
+    app = App.__new__(App)
+    app.controller = SimpleNamespace(
+        game=SimpleNamespace(
+            table=SimpleNamespace(
+                scan=SimpleNamespace(runtime_region_offset=(15, -7)),
+            ),
+        ),
+    )
+
+    bbox = App._target_button_screen_bbox(
+        app,
+        {"bbox": [100, 200, 30, 40]},
+    )
+
+    assert bbox == (115, 193, 30, 40)
+
+
+def test_auto_click_queues_absolute_target_box_once() -> None:
+    app = App.__new__(App)
+    app.controller = SimpleNamespace(
+        game=SimpleNamespace(
+            table=SimpleNamespace(
+                scan=SimpleNamespace(runtime_region_offset=(5, 10)),
+            ),
+        ),
+    )
+    app.var_auto_click_target = _Var(True)
+    app.var_click_status = _Var("")
+    app._click_queue = queue.Queue()
+    app._last_click_signature = None
+    app._last_click_queued_at = 0.0
+
+    state = ControllerViewState(
+        game_name="PMU",
+        scan_count=1,
+        scan_ok=True,
+        scan_failures=0,
+        hand_id=42,
+        decision_action="CALL",
+        target_button={
+            "label": "B1",
+            "state": "paie",
+            "bbox": [100, 200, 30, 40],
+        },
+    )
+
+    App._maybe_queue_target_click(app, state)
+    App._maybe_queue_target_click(app, state)
+
+    assert app._click_queue.get_nowait() == (105, 210, 30, 40)
+    assert app._click_queue.empty()
+
+
+def test_auto_click_requeues_same_target_after_retry_delay(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = App.__new__(App)
+    app.controller = SimpleNamespace(
+        game=SimpleNamespace(
+            table=SimpleNamespace(
+                scan=SimpleNamespace(runtime_region_offset=(5, 10)),
+            ),
+        ),
+    )
+    app.var_auto_click_target = _Var(True)
+    app.var_click_status = _Var("")
+    app._click_queue = queue.Queue()
+    app._last_click_signature = None
+    app._last_click_queued_at = 0.0
+    times = iter([100.0, 101.0, 103.1])
+    monkeypatch.setattr("launch.time.monotonic", lambda: next(times))
+
+    state = ControllerViewState(
+        game_name="PMU",
+        scan_count=1,
+        scan_ok=True,
+        scan_failures=0,
+        hand_id=42,
+        decision_action="CHECK",
+        target_button={
+            "label": "B1",
+            "state": "check",
+            "bbox": [100, 200, 30, 40],
+        },
+    )
+
+    App._maybe_queue_target_click(app, state)
+    App._maybe_queue_target_click(app, state)
+    App._maybe_queue_target_click(app, state)
+
+    assert app._click_queue.get_nowait() == (105, 210, 30, 40)
+    assert app._click_queue.get_nowait() == (105, 210, 30, 40)
+    assert app._click_queue.empty()
+
+
+def test_left_click_box_uses_human_clicker_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = App.__new__(App)
+    calls = []
+
+    monkeypatch.setattr("launch.click_target_button_box", lambda box: calls.append(box))
+
+    App._left_click_box_center(app, (10, 20, 30, 40))
+
+    assert calls == [(10, 20, 30, 40)]
+
+
+def test_click_target_button_box_passes_clicker_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+
+    def fake_click_xywh_box(box, **kwargs):
+        calls.append((box, kwargs))
+        return "clicked"
+
+    monkeypatch.setattr("objet.utils.human_clicker.click_xywh_box", fake_click_xywh_box)
+
+    assert click_target_button_box((10, 20, 30, 40)) == "clicked"
+    assert calls == [
+        (
+            (10, 20, 30, 40),
+            {
+                "button": "left",
+                "inner_box_scale": 0.92,
+                "click_box_scale": 0.50,
+                "delay_chance": 0.0,
+                "pre_click_delay_min": 0.025,
+                "pre_click_delay_max": 0.08,
+                "min_duration": 0.04,
+                "max_duration": 0.10,
+                "spiral_radius": 8.0,
+                "jitter": 1.5,
+            },
+        )
+    ]
+
+
+class _Var:
+    def __init__(self, value):
+        self.value = value
+
+    def get(self):
+        return self.value
+
+    def set(self, value) -> None:
+        self.value = value

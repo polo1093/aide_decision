@@ -22,6 +22,7 @@ from objet.utils.logging_config import (
 )
 from launch_support import (
     AUTO_IDENTIFY_COOLDOWN_SECONDS,
+    AUTO_CLICK_RETRY_SECONDS,
     CONFIG_ROOT,
     DEFAULT_GAME_NAME,
     DEFAULT_SCAN_INTERVAL_MS,
@@ -49,6 +50,7 @@ from launch_support import (
     build_quick_setup_args,
     build_validate_cards_args,
     build_zone_editor_args,
+    click_target_button_box,
     format_command,
     load_interface_state,
     needs_card_identification,
@@ -90,6 +92,16 @@ class App(tk.Tk):
         self._scan_in_flight = False
         self._scan_result_queue: "queue.Queue[tuple[str, object, float]]" = queue.Queue()
         self._scan_poll_after_id: Optional[str] = None
+        self._click_queue: "queue.Queue[Optional[tuple[int, int, int, int]]]" = queue.Queue()
+        self._click_worker_stop = threading.Event()
+        self._click_worker = threading.Thread(
+            target=self._click_worker_loop,
+            name="target-button-click-worker",
+            daemon=True,
+        )
+        self._click_hotkey = None
+        self._last_click_signature: Optional[tuple[object, ...]] = None
+        self._last_click_queued_at = 0.0
         self._tool_processes: dict[str, subprocess.Popen] = {}
         self._last_auto_identify_t = 0.0
         self._tools_window: Optional[tk.Toplevel] = None
@@ -109,12 +121,17 @@ class App(tk.Tk):
         self.summary_value_labels: dict[str, tk.Label] = {}
         self.profile_labels: list[tk.Label] = []
         self.var_auto_identify_cards = tk.BooleanVar(value=False)
+        self.var_show_button_highlight = tk.BooleanVar(value=True)
+        self.var_auto_click_target = tk.BooleanVar(value=False)
+        self.var_click_status = tk.StringVar(value="clic: off")
 
         self._build()
         self._build_menu()
         self._layout()
         self._bind_keys()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._click_worker.start()
+        self._register_click_hotkey()
         if window_state == "zoomed":
             self.after(0, lambda: self.state("zoomed"))
         self._refresh_profile_status()
@@ -221,6 +238,19 @@ class App(tk.Tk):
             text="Demander carte non lue (live, 5s)",
             variable=self.var_auto_identify_cards,
         )
+        self.chk_show_button_highlight = ttk.Checkbutton(
+            self.frm_options,
+            text="Afficher rectangle bouton cible",
+            variable=self.var_show_button_highlight,
+            command=self._on_button_highlight_option_changed,
+        )
+        self.chk_auto_click_target = ttk.Checkbutton(
+            self.frm_options,
+            text="Cliquer bouton cible (F12)",
+            variable=self.var_auto_click_target,
+            command=self._on_auto_click_option_changed,
+        )
+        self.lbl_click_status = ttk.Label(self.frm_options, textvariable=self.var_click_status)
         self.frm_players = ttk.LabelFrame(self.frm_side, text="Joueurs")
         self.var_players = tk.StringVar(value="")
         self.lbl_players = tk.Label(
@@ -380,7 +410,10 @@ class App(tk.Tk):
         self.frm_profile.pack(side="top", fill="x", pady=(0, 8))
         self.btn_tools.pack(side="top", fill="x", pady=(0, 8))
         self.frm_options.pack(side="top", fill="x", pady=(0, 8))
-        self.chk_auto_identify_cards.pack(side="top", anchor="w", padx=12, pady=10)
+        self.chk_auto_identify_cards.pack(side="top", anchor="w", padx=12, pady=(10, 4))
+        self.chk_show_button_highlight.pack(side="top", anchor="w", padx=12, pady=(0, 4))
+        self.chk_auto_click_target.pack(side="top", anchor="w", padx=12, pady=(0, 4))
+        self.lbl_click_status.pack(side="top", anchor="w", padx=12, pady=(0, 10))
         self.frm_players.pack(side="top", fill="both", expand=True, pady=(0, 8))
         self.frm_buttons.pack(side="top", fill="x")
         self.lbl_players.pack(side="top", anchor="w", padx=12, pady=10)
@@ -450,6 +483,8 @@ class App(tk.Tk):
 
     def _on_close(self) -> None:
         self.stop_scan()
+        self._unregister_click_hotkey()
+        self._stop_click_worker()
         self._save_interface_state()
         self.destroy()
 
@@ -1043,6 +1078,7 @@ class App(tk.Tk):
         self.var_players.set(players_header + "\n" + "\n".join(state.players))
         self.var_buttons.set("\n".join(active_buttons) if active_buttons else "aucun bouton actif")
         self._update_button_highlight(state.target_button)
+        self._maybe_queue_target_click(state)
         self._set_text(state.to_text())
 
     def _style_summary(self, action_available: bool) -> None:
@@ -1069,11 +1105,152 @@ class App(tk.Tk):
         _style_equity_label(self.metric_value_labels.get("Equity 1v1"), state.equity_1v1)
 
     def _update_button_highlight(self, target_button: Optional[dict[str, object]]) -> None:
-        bbox = _target_button_bbox(target_button)
+        if not self.var_show_button_highlight.get():
+            self._hide_button_highlight()
+            return
+
+        bbox = self._target_button_screen_bbox(target_button)
         if bbox is None:
             self._hide_button_highlight()
             return
         self._show_button_highlight(bbox)
+
+    def _target_button_screen_bbox(self, target_button: Optional[dict[str, object]]) -> Optional[tuple[int, int, int, int]]:
+        bbox = _target_button_bbox(target_button)
+        if bbox is None:
+            return None
+
+        dx, dy = self._runtime_region_offset()
+        x, y, width, height = bbox
+        return x + dx, y + dy, width, height
+
+    def _runtime_region_offset(self) -> tuple[int, int]:
+        table = getattr(getattr(self.controller, "game", None), "table", None)
+        scan = getattr(table, "scan", None)
+        offset = getattr(scan, "runtime_region_offset", (0, 0))
+        if not isinstance(offset, (list, tuple)) or len(offset) < 2:
+            return 0, 0
+        try:
+            return int(round(float(offset[0]))), int(round(float(offset[1])))
+        except (TypeError, ValueError):
+            return 0, 0
+
+    def _on_button_highlight_option_changed(self) -> None:
+        if not self.var_show_button_highlight.get():
+            self._hide_button_highlight()
+            return
+
+        state = getattr(self.controller, "last_view_state", None)
+        if isinstance(state, ControllerViewState):
+            self._update_button_highlight(state.target_button)
+
+    def _toggle_auto_click(self) -> None:
+        self.var_auto_click_target.set(not self.var_auto_click_target.get())
+        self._on_auto_click_option_changed()
+
+    def _on_auto_click_option_changed(self) -> None:
+        if not self.var_auto_click_target.get():
+            self._last_click_signature = None
+            self._last_click_queued_at = 0.0
+            self.var_click_status.set("clic: off")
+            return
+
+        self.var_click_status.set("clic: pret")
+        state = getattr(self.controller, "last_view_state", None)
+        if isinstance(state, ControllerViewState):
+            self._maybe_queue_target_click(state)
+
+    def _maybe_queue_target_click(self, state: ControllerViewState) -> None:
+        if not self.var_auto_click_target.get():
+            self._last_click_signature = None
+            self._last_click_queued_at = 0.0
+            self.var_click_status.set("clic: off")
+            return
+
+        click_box = self._target_button_screen_bbox(state.target_button)
+        if click_box is None:
+            self._last_click_signature = None
+            self._last_click_queued_at = 0.0
+            self.var_click_status.set("clic: pret")
+            return
+
+        signature = self._click_signature(state, click_box)
+        now = time.monotonic()
+        elapsed = now - self._last_click_queued_at
+        if signature == self._last_click_signature and elapsed < AUTO_CLICK_RETRY_SECONDS:
+            return
+
+        self._last_click_signature = signature
+        self._last_click_queued_at = now
+        self._click_queue.put(click_box)
+        self.var_click_status.set(f"clic: queue {click_box}")
+
+    def _click_signature(
+        self,
+        state: ControllerViewState,
+        click_box: tuple[int, int, int, int],
+    ) -> tuple[object, ...]:
+        target = state.target_button or {}
+        return (
+            state.hand_id,
+            state.decision_action,
+            target.get("label"),
+            target.get("state"),
+            click_box,
+        )
+
+    def _click_worker_loop(self) -> None:
+        while not self._click_worker_stop.is_set():
+            try:
+                click_box = self._click_queue.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            if click_box is None:
+                continue
+            try:
+                self._left_click_box_center(click_box)
+            except Exception as exc:
+                logger.exception("erreur_clic_bouton_cible box=%s", click_box)
+                self.after(0, lambda exc=exc: self.var_click_status.set(f"clic: erreur {exc}"))
+            else:
+                self.after(0, lambda box=click_box: self.var_click_status.set(f"clic: fait {box}"))
+
+    def _left_click_box_center(self, click_box: tuple[int, int, int, int]) -> None:
+        x, y, width, height = click_box
+        if width <= 0 or height <= 0:
+            return
+
+        click_target_button_box((x, y, width, height))
+
+    def _stop_click_worker(self) -> None:
+        self._click_worker_stop.set()
+        self._click_queue.put(None)
+        if self._click_worker.is_alive():
+            self._click_worker.join(timeout=1.0)
+
+    def _register_click_hotkey(self) -> None:
+        try:
+            import keyboard
+
+            self._click_hotkey = keyboard.add_hotkey(
+                "f12",
+                lambda: self.after(0, self._toggle_auto_click),
+            )
+        except Exception as exc:
+            logger.warning("hotkey_f12_global_indisponible error=%s", exc)
+            self._click_hotkey = None
+            self.bind("<F12>", lambda _e: self._toggle_auto_click())
+
+    def _unregister_click_hotkey(self) -> None:
+        if self._click_hotkey is None:
+            return
+        try:
+            import keyboard
+
+            keyboard.remove_hotkey(self._click_hotkey)
+        except Exception as exc:
+            logger.warning("hotkey_f12_global_suppression_impossible error=%s", exc)
+        self._click_hotkey = None
 
     def _show_button_highlight(self, bbox: tuple[int, int, int, int]) -> None:
         x, y, width, height = bbox

@@ -26,6 +26,7 @@ DEFAULT_WINDOW_GEOMETRY = "1080x760"
 DEFAULT_SCAN_INTERVAL_MS = 1000
 MIN_SCAN_INTERVAL_MS = 25
 AUTO_IDENTIFY_COOLDOWN_SECONDS = 5.0
+AUTO_CLICK_RETRY_SECONDS = 3.0
 VIDEO_FILETYPES = (
     ("Videos", "*.avi *.mp4 *.mkv *.mov"),
     ("Tous les fichiers", "*.*"),
@@ -329,6 +330,26 @@ def _target_button_bbox(target_button: Optional[dict[str, object]]) -> Optional[
     if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
         return None
     return tuple(int(value) for value in bbox)
+
+
+def click_target_button_box(click_box: tuple[int, int, int, int]) -> object:
+    """Click a target button bbox expressed as absolute screen x/y/width/height."""
+
+    from objet.utils.human_clicker import click_xywh_box
+
+    return click_xywh_box(
+        click_box,
+        button="left",
+        inner_box_scale=0.92,
+        click_box_scale=0.50,
+        delay_chance=0.0,
+        pre_click_delay_min=0.025,
+        pre_click_delay_max=0.08,
+        min_duration=0.04,
+        max_duration=0.10,
+        spiral_radius=8.0,
+        jitter=1.5,
+    )
 
 
 def _decision_explanation(action: str, reason: str) -> str:
