@@ -359,7 +359,7 @@ def test_auto_click_queues_absolute_target_box_once() -> None:
     assert app._click_queue.empty()
 
 
-def test_auto_click_requeues_same_target_after_retry_delay(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_auto_click_disarms_after_queueing_target(monkeypatch: pytest.MonkeyPatch) -> None:
     app = App.__new__(App)
     app.controller = SimpleNamespace(
         game=SimpleNamespace(
@@ -373,8 +373,7 @@ def test_auto_click_requeues_same_target_after_retry_delay(monkeypatch: pytest.M
     app._click_queue = queue.Queue()
     app._last_click_signature = None
     app._last_click_queued_at = 0.0
-    times = iter([100.0, 101.0, 103.1])
-    monkeypatch.setattr("launch.time.monotonic", lambda: next(times))
+    monkeypatch.setattr("launch.time.monotonic", lambda: 100.0)
 
     state = ControllerViewState(
         game_name="PMU",
@@ -392,11 +391,65 @@ def test_auto_click_requeues_same_target_after_retry_delay(monkeypatch: pytest.M
 
     App._maybe_queue_target_click(app, state)
     App._maybe_queue_target_click(app, state)
-    App._maybe_queue_target_click(app, state)
 
     assert app._click_queue.get_nowait().click_box == (105, 210, 30, 40)
-    assert app._click_queue.get_nowait().click_box == (105, 210, 30, 40)
     assert app._click_queue.empty()
+    assert app.var_auto_click_target.get() is False
+
+
+def test_auto_click_waits_after_activation_before_queueing(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = App.__new__(App)
+    state = ControllerViewState(
+        game_name="PMU",
+        scan_count=1,
+        scan_ok=True,
+        scan_failures=0,
+        hand_id=42,
+        decision_action="CALL",
+        target_button={
+            "label": "B1",
+            "state": "paie",
+            "bbox": [100, 200, 30, 40],
+        },
+    )
+    app.controller = SimpleNamespace(
+        last_view_state=state,
+        game=SimpleNamespace(
+            table=SimpleNamespace(
+                scan=SimpleNamespace(runtime_region_offset=(5, 10)),
+            ),
+        ),
+    )
+    app.var_auto_click_target = _Var(True)
+    app.var_click_status = _Var("")
+    app._click_queue = queue.Queue()
+    app._last_click_signature = None
+    app._last_click_queued_at = 0.0
+    app._auto_click_after_id = None
+    now = [100.0]
+    callbacks = []
+    monkeypatch.setattr("launch.time.monotonic", lambda: now[0])
+    app.after = lambda delay_ms, callback: callbacks.append((delay_ms, callback)) or f"after-{len(callbacks)}"
+    app.after_cancel = lambda _after_id: None
+
+    App._on_auto_click_option_changed(app)
+
+    assert app._click_queue.empty()
+    assert callbacks[0][0] == 1000
+    assert app.var_auto_click_target.get() is True
+
+    now[0] = 100.5
+    App._maybe_queue_target_click(app, state)
+
+    assert app._click_queue.empty()
+    assert app.var_auto_click_target.get() is True
+
+    now[0] = 101.1
+    callbacks[-1][1]()
+
+    command = app._click_queue.get_nowait()
+    assert command.click_box == (105, 210, 30, 40)
+    assert app.var_auto_click_target.get() is False
 
 
 def test_auto_click_carries_raise_amount() -> None:
@@ -527,15 +580,17 @@ def test_click_target_button_box_passes_clicker_defaults(monkeypatch: pytest.Mon
             (10, 20, 30, 40),
             {
                 "button": "left",
+                "target_point": (25, 40),
                 "inner_box_scale": 0.92,
-                "click_box_scale": 0.50,
+                "click_box_scale": 1.0,
+                "click_on_enter": False,
                 "delay_chance": 0.0,
                 "pre_click_delay_min": 0.025,
                 "pre_click_delay_max": 0.08,
                 "min_duration": 0.04,
                 "max_duration": 0.10,
-                "spiral_radius": 8.0,
-                "jitter": 1.5,
+                "spiral_radius": 5.0,
+                "jitter": 0.6,
             },
         )
     ]

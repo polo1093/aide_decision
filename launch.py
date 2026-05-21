@@ -21,6 +21,7 @@ from objet.utils.logging_config import (
     session_log,
 )
 from launch_support import (
+    AUTO_CLICK_ARM_DELAY_SECONDS,
     AUTO_IDENTIFY_COOLDOWN_SECONDS,
     AUTO_CLICK_RETRY_SECONDS,
     CONFIG_ROOT,
@@ -104,6 +105,8 @@ class App(tk.Tk):
         self._click_hotkey = None
         self._last_click_signature: Optional[tuple[object, ...]] = None
         self._last_click_queued_at = 0.0
+        self._auto_click_ready_at = 0.0
+        self._auto_click_after_id: Optional[str] = None
         self._tool_processes: dict[str, subprocess.Popen] = {}
         self._last_auto_identify_t = 0.0
         self._tools_window: Optional[tk.Toplevel] = None
@@ -1154,19 +1157,29 @@ class App(tk.Tk):
         if not self.var_auto_click_target.get():
             self._last_click_signature = None
             self._last_click_queued_at = 0.0
+            self._auto_click_ready_at = 0.0
+            self._cancel_auto_click_timer()
+            self._clear_pending_clicks()
             self.var_click_status.set("clic: off")
             return
 
-        self.var_click_status.set("clic: pret")
-        state = getattr(self.controller, "last_view_state", None)
-        if isinstance(state, ControllerViewState):
-            self._maybe_queue_target_click(state)
+        self._last_click_signature = None
+        self._last_click_queued_at = 0.0
+        self._auto_click_ready_at = time.monotonic() + AUTO_CLICK_ARM_DELAY_SECONDS
+        self.var_click_status.set(f"clic: arme dans {AUTO_CLICK_ARM_DELAY_SECONDS:.1f}s")
+        self._schedule_auto_click_ready_check(AUTO_CLICK_ARM_DELAY_SECONDS)
 
     def _maybe_queue_target_click(self, state: ControllerViewState) -> None:
         if not self.var_auto_click_target.get():
             self._last_click_signature = None
             self._last_click_queued_at = 0.0
             self.var_click_status.set("clic: off")
+            return
+
+        wait_remaining = self._auto_click_wait_remaining()
+        if wait_remaining > 0:
+            self.var_click_status.set(f"clic: arme dans {wait_remaining:.1f}s")
+            self._schedule_auto_click_ready_check(wait_remaining)
             return
 
         click_box = self._target_button_screen_bbox(state.target_button)
@@ -1198,6 +1211,11 @@ class App(tk.Tk):
             runtime_offset=self._runtime_region_offset(),
         )
         self._click_queue.put(command)
+        self.var_auto_click_target.set(False)
+        self._last_click_signature = None
+        self._last_click_queued_at = 0.0
+        self._auto_click_ready_at = 0.0
+        self._cancel_auto_click_timer()
         self.var_click_status.set(self._queued_click_status(command))
 
     def _click_signature(
@@ -1271,14 +1289,52 @@ class App(tk.Tk):
 
     def _queued_click_status(self, command: TargetActionCommand) -> str:
         if command.decision_action == "RAISE" and command.raise_amount is not None:
-            return f"clic: queue raise {command.raise_amount} {command.click_box}"
-        return f"clic: queue {command.click_box}"
+            return f"clic: queue raise {command.raise_amount} {command.click_box} (one-shot)"
+        return f"clic: queue {command.click_box} (one-shot)"
 
     def _stop_click_worker(self) -> None:
         self._click_worker_stop.set()
         self._click_queue.put(None)
         if self._click_worker.is_alive():
             self._click_worker.join(timeout=1.0)
+
+    def _clear_pending_clicks(self) -> None:
+        try:
+            while True:
+                self._click_queue.get_nowait()
+        except queue.Empty:
+            return
+
+    def _auto_click_wait_remaining(self) -> float:
+        ready_at = self.__dict__.get("_auto_click_ready_at", 0.0)
+        if ready_at <= 0:
+            return 0.0
+        return max(0.0, ready_at - time.monotonic())
+
+    def _schedule_auto_click_ready_check(self, delay_seconds: float) -> None:
+        self._cancel_auto_click_timer()
+        delay_ms = max(1, int(delay_seconds * 1000))
+        self._auto_click_after_id = self.after(delay_ms, self._try_auto_click_current_state)
+
+    def _cancel_auto_click_timer(self) -> None:
+        after_id = self.__dict__.get("_auto_click_after_id")
+        if after_id is None:
+            return
+        try:
+            self.after_cancel(after_id)
+        except Exception:
+            pass
+        self._auto_click_after_id = None
+
+    def _try_auto_click_current_state(self) -> None:
+        self._auto_click_after_id = None
+        if not self.var_auto_click_target.get():
+            return
+        state = getattr(self.controller, "last_view_state", None)
+        if isinstance(state, ControllerViewState):
+            self._maybe_queue_target_click(state)
+        else:
+            self.var_click_status.set("clic: pret")
 
     def _register_click_hotkey(self) -> None:
         try:

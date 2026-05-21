@@ -443,6 +443,7 @@ def click_zone(
     max_duration: float = 0.14,
     spiral_radius: float = 10.0,
     jitter: float = 1.5,
+    click_on_enter: bool = True,
 ) -> ClickResult:
     if not 0.1 <= inner_box_scale <= 1.0:
         raise ValueError("inner_box_scale must be between 0.1 and 1.0")
@@ -463,15 +464,23 @@ def click_zone(
     target = choose_target(click_region, target_point)
     start = clamp_point(pyautogui_module.position(), movement_region)
     duration = random.uniform(min_duration, max_duration)
-    clicked, delayed, active_click_point = move_path_click_on_enter(
-        path_to_target(start, target, movement_region, duration, spiral_radius),
-        duration,
-        click_region,
-        button=button,
-        hold_min=pre_click_delay_min,
-        hold_max=pre_click_delay_max,
-        delay_chance=delay_chance,
-    )
+
+    if click_on_enter:
+        clicked, delayed, active_click_point = move_path_click_on_enter(
+            path_to_target(start, target, movement_region, duration, spiral_radius),
+            duration,
+            click_region,
+            button=button,
+            hold_min=pre_click_delay_min,
+            hold_max=pre_click_delay_max,
+            delay_chance=delay_chance,
+        )
+    else:
+        move_path(path_to_target(start, target, movement_region, duration, spiral_radius), duration)
+        clicked = False
+        delayed = False
+        active_click_point = None
+
     if not clicked:
         delayed = settle_and_click(
             target,
@@ -501,6 +510,7 @@ def click_xywh_box(
     box: tuple[int, int, int, int],
     *,
     button: str = "left",
+    target_point: Optional[Point] = None,
     inner_box_scale: float = 0.92,
     click_box_scale: float = 0.50,
     delay_chance: float = 0.0,
@@ -510,11 +520,13 @@ def click_xywh_box(
     max_duration: float = 0.14,
     spiral_radius: float = 10.0,
     jitter: float = 1.5,
+    click_on_enter: bool = True,
 ) -> ClickResult:
     """Click inside an absolute screen box expressed as ``(x, y, width, height)``."""
 
     return click_zone(
         region=xywh_to_region(box),
+        target_point=target_point,
         button=button,
         inner_box_scale=inner_box_scale,
         click_box_scale=click_box_scale,
@@ -525,6 +537,7 @@ def click_xywh_box(
         max_duration=max_duration,
         spiral_radius=spiral_radius,
         jitter=jitter,
+        click_on_enter=click_on_enter,
     )
 
 
