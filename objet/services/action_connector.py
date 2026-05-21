@@ -195,7 +195,7 @@ def _pyautogui():
 
 
 def _click_xywh_box(box: tuple[int, int, int, int]):
-    from objet.utils.human_clicker import click_xywh_box
+    from personal_arc_click import click_xywh_box
 
     return click_xywh_box(
         box,

@@ -30,6 +30,7 @@ MIN_SCAN_INTERVAL_MS = 25
 AUTO_IDENTIFY_COOLDOWN_SECONDS = 5.0
 AUTO_CLICK_ARM_DELAY_SECONDS = 1.0
 AUTO_CLICK_RETRY_SECONDS = 3.0
+AUTO_CLICK_COMMAND_TTL_SECONDS = 1.5
 VIDEO_FILETYPES = (
     ("Videos", "*.avi *.mp4 *.mkv *.mov"),
     ("Tous les fichiers", "*.*"),
@@ -43,6 +44,12 @@ class TargetActionCommand:
     decision_action: str
     raise_amount: Optional[float] = None
     runtime_offset: tuple[int, int] = (0, 0)
+    hand_id: object = None
+    street: str = ""
+    target_button_label: str = ""
+    target_button_state: str = ""
+    target_button_value: Optional[float] = None
+    queued_at: float = 0.0
 
 
 class ProfileItem:
@@ -347,7 +354,7 @@ def _target_button_bbox(target_button: Optional[dict[str, object]]) -> Optional[
 def click_target_button_box(click_box: tuple[int, int, int, int]) -> object:
     """Click a target button bbox expressed as absolute screen x/y/width/height."""
 
-    from objet.utils.human_clicker import click_xywh_box
+    from personal_arc_click import click_xywh_box
 
     x, y, width, height = click_box
     target_point = (int(round(x + width / 2.0)), int(round(y + height / 2.0)))

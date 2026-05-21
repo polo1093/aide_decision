@@ -114,6 +114,26 @@ def test_apply_scan_fixes_dollar_read_as_four_for_call_button() -> None:
     assert button.value == 10.0
 
 
+def test_apply_scan_fixes_dollar_read_as_eight_for_call_button() -> None:
+    button = Button()
+
+    button.apply_scan("call 840")
+
+    assert button.is_activate() is True
+    assert button.etat == "paie"
+    assert button.value == 40.0
+
+
+def test_apply_scan_ignores_digits_embedded_in_ocr_words() -> None:
+    button = Button()
+
+    button.apply_scan("call s10o")
+
+    assert button.is_activate() is True
+    assert button.etat == "paie"
+    assert button.value == 0.0
+
+
 def test_apply_scan_fixes_grouped_all_in_amount() -> None:
     button = Button()
 

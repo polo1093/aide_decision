@@ -233,6 +233,20 @@ def test_river_small_bet_does_not_trigger_protection_raise() -> None:
     assert result.reason == "call_profitable_or_close"
 
 
+def test_folds_river_big_bet_when_showdown_equity_is_weak() -> None:
+    game = DummyGame(_cards_state("KH", "9S"), buttons=DummyButtons(min_value=80.0), street="RIVER", pot_amount=100.0)
+    game.etat.Call_max = 120.0
+    game.etat.chance_win = 0.55
+    game.etat.chance_win_0 = 0.52
+    game.etat.equity_required = 0.44
+    decision = Decision()
+
+    result = decision.decide(game)
+
+    assert result.action == "FOLD"
+    assert result.reason == "river_big_bet_weak_showdown"
+
+
 def test_river_paid_raise_requires_near_nut_equity() -> None:
     game = DummyGame(_cards_state("AS", "KS"), buttons=DummyButtons(min_value=2.0), street="RIVER")
     game.etat.Call_max = 40.0

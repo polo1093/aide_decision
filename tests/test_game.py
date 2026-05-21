@@ -218,6 +218,19 @@ def test_partial_flop_scan_does_not_update_stable_board_or_crash() -> None:
     assert game.etat.chance_win is None
 
 
+def test_zero_pot_scan_updates_state_instead_of_reusing_previous_pot() -> None:
+    game = Game()
+    game.etat.pot = 120.0
+
+    game.etat.update(
+        cards_state=CardsState(),
+        players=game.table.players,
+        pot=0.0,
+    )
+
+    assert game.etat.pot == 0.0
+
+
 def test_duplicate_known_cards_skip_calculation_without_pokereval_crash() -> None:
     game = Game()
     game.etat.monte_carlo_simulations = 50

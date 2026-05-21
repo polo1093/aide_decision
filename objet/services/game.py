@@ -302,7 +302,7 @@ class Etat:
     ) -> None:
         cards_are_coherent = self.update_cards_state(cards_state)
         self.update_players(players, opponent_profiles=opponent_profiles)
-        self.pot = pot if pot else self.pot
+        self.pot = pot if pot is not None else self.pot
         self.to_call = DEFAULT_TO_CALL if to_call is None else max(0.0, to_call)
         if not cards_are_coherent:
             self._clear_calculation()

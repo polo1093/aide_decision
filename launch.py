@@ -22,6 +22,7 @@ from objet.utils.logging_config import (
 )
 from launch_support import (
     AUTO_CLICK_ARM_DELAY_SECONDS,
+    AUTO_CLICK_COMMAND_TTL_SECONDS,
     AUTO_IDENTIFY_COOLDOWN_SECONDS,
     AUTO_CLICK_RETRY_SECONDS,
     CONFIG_ROOT,
@@ -1176,23 +1177,42 @@ class App(tk.Tk):
             self.var_click_status.set("clic: off")
             return
 
+        if not state.scan_ok:
+            self._last_click_signature = None
+            self._last_click_queued_at = 0.0
+            self._clear_pending_clicks()
+            self.var_click_status.set("clic: table absente")
+            return
+
         wait_remaining = self._auto_click_wait_remaining()
         if wait_remaining > 0:
             self.var_click_status.set(f"clic: arme dans {wait_remaining:.1f}s")
             self._schedule_auto_click_ready_check(wait_remaining)
             return
 
+        if state.decision_action == "WAIT":
+            self._last_click_signature = None
+            self._last_click_queued_at = 0.0
+            self._clear_pending_clicks()
+            self.var_click_status.set("clic: attente decision")
+            return
+
         click_box = self._target_button_screen_bbox(state.target_button)
         if click_box is None:
             self._last_click_signature = None
             self._last_click_queued_at = 0.0
+            self._clear_pending_clicks()
             self.var_click_status.set("clic: pret")
             return
 
-        if state.decision_action == "FOLD" and not self._fold_has_positive_call(state):
+        if state.decision_action == "FOLD":
             self._last_click_signature = None
             self._last_click_queued_at = 0.0
-            self.var_click_status.set("clic: fold bloque sans call")
+            self._clear_pending_clicks()
+            if not self._fold_has_positive_call(state):
+                self.var_click_status.set("clic: fold bloque sans call")
+            else:
+                self.var_click_status.set("clic: fold ignore, attente call")
             return
 
         signature = self._click_signature(state, click_box)
@@ -1209,11 +1229,14 @@ class App(tk.Tk):
             decision_action=state.decision_action,
             raise_amount=self._target_raise_amount(state),
             runtime_offset=self._runtime_region_offset(),
+            hand_id=state.hand_id,
+            street=state.street,
+            target_button_label=str((state.target_button or {}).get("label", "")),
+            target_button_state=str((state.target_button or {}).get("state", "")),
+            target_button_value=self._target_button_value(state.target_button),
+            queued_at=now,
         )
         self._click_queue.put(command)
-        self.var_auto_click_target.set(False)
-        self._last_click_signature = None
-        self._last_click_queued_at = 0.0
         self._auto_click_ready_at = 0.0
         self._cancel_auto_click_timer()
         self.var_click_status.set(self._queued_click_status(command))
@@ -1250,6 +1273,9 @@ class App(tk.Tk):
                 self.after(0, lambda command=command: self.var_click_status.set(f"clic: fait {command.click_box}"))
 
     def _execute_target_action(self, command: TargetActionCommand) -> None:
+        if not self._queued_command_is_current(command):
+            logger.warning("clic_ignore_commande_perimee command=%s", command)
+            return
         if command.decision_action == "RAISE" and command.raise_amount is not None:
             typed = enter_raise_amount_for_game(
                 command.game_name,
@@ -1272,6 +1298,52 @@ class App(tk.Tk):
 
         click_target_button_box((x, y, width, height))
 
+    def _queued_command_is_current(self, command: TargetActionCommand) -> bool:
+        queued_at = getattr(command, "queued_at", 0.0) or 0.0
+        if queued_at and time.monotonic() - queued_at > AUTO_CLICK_COMMAND_TTL_SECONDS:
+            return False
+
+        state = getattr(self.controller, "last_view_state", None)
+        if not isinstance(state, ControllerViewState):
+            return False
+        if not state.scan_ok:
+            return False
+        if state.hand_id != command.hand_id:
+            return False
+        if state.street != command.street:
+            return False
+        if state.decision_action != command.decision_action:
+            return False
+
+        target = state.target_button or {}
+        if str(target.get("label", "")) != command.target_button_label:
+            return False
+        if str(target.get("state", "")) != command.target_button_state:
+            return False
+        queued_value = getattr(command, "target_button_value", None)
+        if queued_value is not None:
+            current_value = self._target_button_value(target)
+            if current_value is None or abs(current_value - queued_value) >= 0.01:
+                return False
+        if self._target_button_screen_bbox(target) != command.click_box:
+            return False
+
+        if command.decision_action == "RAISE":
+            try:
+                current_raise = float(state.raise_amount)
+                queued_raise = float(command.raise_amount)
+            except (TypeError, ValueError):
+                return command.raise_amount is None and state.raise_amount is None
+            return abs(current_raise - queued_raise) < 0.01
+        return True
+
+    @staticmethod
+    def _target_button_value(target_button: Optional[dict[str, object]]) -> Optional[float]:
+        try:
+            return float((target_button or {}).get("value"))
+        except (TypeError, ValueError):
+            return None
+
     def _target_raise_amount(self, state: ControllerViewState) -> Optional[float]:
         if state.decision_action != "RAISE":
             return None
@@ -1289,8 +1361,8 @@ class App(tk.Tk):
 
     def _queued_click_status(self, command: TargetActionCommand) -> str:
         if command.decision_action == "RAISE" and command.raise_amount is not None:
-            return f"clic: queue raise {command.raise_amount} {command.click_box} (one-shot)"
-        return f"clic: queue {command.click_box} (one-shot)"
+            return f"clic: queue raise {command.raise_amount} {command.click_box}"
+        return f"clic: queue {command.click_box}"
 
     def _stop_click_worker(self) -> None:
         self._click_worker_stop.set()

@@ -142,14 +142,14 @@ def float_in_str(texte: str, *, state: str = "") -> float:
         return 0.0
 
     cleaned = re.sub(r"\bf\s*\d+\b", " ", texte, flags=re.IGNORECASE)
-    grouped = r"[-+]?\d+(?:\s+\d{3})+(?:[.,]\d+)?"
-    plain = r"[-+]?\d+(?:[.,]\d+)?"
+    grouped = r"(?<![A-Za-z0-9])[-+]?\d+(?:\s+\d{3})+(?:[.,]\d+)?(?![A-Za-z0-9])"
+    plain = r"(?<![A-Za-z0-9])[-+]?\d+(?:[.,]\d+)?(?![A-Za-z0-9])"
     matches = re.findall(f"{grouped}|{plain}", cleaned)
     if not matches:
         return 0.0
 
     token = matches[-1].strip()
-    if state.lower() in {"paie", "mise", "relance"} and re.fullmatch(r"[45]\d{2}", token):
+    if state.lower() == "paie" and re.fullmatch(r"[458]\d{2}", token):
         token = token[1:]
 
     token = re.sub(r"(?<!\d)5\s+(?=\d{1,3}(?:\s+\d{3})+(?:[.,]\d+)?\b)", "", token)

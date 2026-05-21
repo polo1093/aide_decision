@@ -46,6 +46,8 @@ class Decision:
         "FLOP": 0.54,
         "TURN": 0.58,
     }
+    RIVER_BIG_BET_MIN_POT_RATIO: float = 0.55
+    RIVER_BIG_BET_MIN_1V1_EQUITY: float = 0.62
 
     def decide(self, game: Game) -> DecisionResult:
         """Return the recommended action for the hero based on the current state."""
@@ -102,6 +104,9 @@ class Decision:
 
         if self._should_fold_river_board_only_hand(game, to_call=to_call):
             return _log_decision(DecisionResult(action="FOLD", reason="river_board_only_big_bet"))
+
+        if self._should_fold_river_big_bet_with_weak_showdown(game, to_call=to_call):
+            return _log_decision(DecisionResult(action="FOLD", reason="river_big_bet_weak_showdown"))
 
         if self._can_value_raise_paid_pot(game, equity=equity, edge=edge):
             return _log_decision(
@@ -160,6 +165,17 @@ class Decision:
         if pot is None or pot <= 0 or (to_call / pot) < 0.65:
             return False
         return _hero_uses_no_private_card(game)
+
+    def _should_fold_river_big_bet_with_weak_showdown(self, game: Game, *, to_call: float) -> bool:
+        if _game_street(game) != "RIVER":
+            return False
+        pot = _as_positive_float(getattr(game.etat, "pot", None))
+        if pot is None or (to_call / pot) < self.RIVER_BIG_BET_MIN_POT_RATIO:
+            return False
+        equity_1v1 = _as_probability(getattr(game.etat, "chance_win_0", None))
+        if equity_1v1 is None:
+            return False
+        return equity_1v1 < self.RIVER_BIG_BET_MIN_1V1_EQUITY
 
 
 def _log_decision(result: DecisionResult) -> DecisionResult:
@@ -266,6 +282,16 @@ def _as_positive_float(value: object) -> Optional[float]:
     except (TypeError, ValueError):
         return None
     if number <= 0:
+        return None
+    return number
+
+
+def _as_probability(value: object) -> Optional[float]:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not 0.0 <= number <= 1.0:
         return None
     return number
 

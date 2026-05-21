@@ -359,7 +359,7 @@ def test_auto_click_queues_absolute_target_box_once() -> None:
     assert app._click_queue.empty()
 
 
-def test_auto_click_disarms_after_queueing_target(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_auto_click_stays_armed_after_queueing_target(monkeypatch: pytest.MonkeyPatch) -> None:
     app = App.__new__(App)
     app.controller = SimpleNamespace(
         game=SimpleNamespace(
@@ -394,7 +394,7 @@ def test_auto_click_disarms_after_queueing_target(monkeypatch: pytest.MonkeyPatc
 
     assert app._click_queue.get_nowait().click_box == (105, 210, 30, 40)
     assert app._click_queue.empty()
-    assert app.var_auto_click_target.get() is False
+    assert app.var_auto_click_target.get() is True
 
 
 def test_auto_click_waits_after_activation_before_queueing(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -449,7 +449,7 @@ def test_auto_click_waits_after_activation_before_queueing(monkeypatch: pytest.M
 
     command = app._click_queue.get_nowait()
     assert command.click_box == (105, 210, 30, 40)
-    assert app.var_auto_click_target.get() is False
+    assert app.var_auto_click_target.get() is True
 
 
 def test_auto_click_carries_raise_amount() -> None:
@@ -528,9 +528,88 @@ def test_auto_click_blocks_fold_when_no_call_amount() -> None:
     assert app.var_click_status.get() == "clic: fold bloque sans call"
 
 
+def test_auto_click_keeps_waiting_after_fold_with_call_amount() -> None:
+    app = App.__new__(App)
+    app.controller = SimpleNamespace(
+        game=SimpleNamespace(
+            table=SimpleNamespace(
+                scan=SimpleNamespace(runtime_region_offset=(5, 10)),
+            ),
+        ),
+    )
+    app.var_auto_click_target = _Var(True)
+    app.var_click_status = _Var("")
+    app._click_queue = queue.Queue()
+    app._last_click_signature = None
+    app._last_click_queued_at = 0.0
+
+    fold_state = ControllerViewState(
+        game_name="PokerTH",
+        scan_count=1,
+        scan_ok=True,
+        scan_failures=0,
+        hand_id=42,
+        decision_action="FOLD",
+        to_call=10.0,
+        target_button={
+            "label": "B3",
+            "state": "fold",
+            "bbox": [100, 200, 30, 40],
+        },
+    )
+    call_state = ControllerViewState(
+        game_name="PokerTH",
+        scan_count=2,
+        scan_ok=True,
+        scan_failures=0,
+        hand_id=42,
+        decision_action="CALL",
+        to_call=10.0,
+        target_button={
+            "label": "B2",
+            "state": "paie",
+            "bbox": [120, 220, 30, 40],
+        },
+    )
+
+    App._maybe_queue_target_click(app, fold_state)
+
+    assert app._click_queue.empty()
+    assert app.var_auto_click_target.get() is True
+    assert app.var_click_status.get() == "clic: fold ignore, attente call"
+
+    App._maybe_queue_target_click(app, call_state)
+
+    command = app._click_queue.get_nowait()
+    assert command.decision_action == "CALL"
+    assert command.click_box == (125, 230, 30, 40)
+
+
 def test_execute_target_action_enters_raise_amount_before_click(monkeypatch: pytest.MonkeyPatch) -> None:
     app = App.__new__(App)
     calls = []
+    app.controller = SimpleNamespace(
+        last_view_state=ControllerViewState(
+            game_name="PokerTH",
+            scan_count=1,
+            scan_ok=True,
+            scan_failures=0,
+            hand_id=42,
+            street="TURN",
+            decision_action="RAISE",
+            raise_amount=820.0,
+            target_button={
+                "label": "B1",
+                "state": "relance",
+                "bbox": [5, 10, 30, 40],
+            },
+        ),
+        game=SimpleNamespace(
+            table=SimpleNamespace(
+                scan=SimpleNamespace(runtime_region_offset=(5, 10)),
+            ),
+        ),
+    )
 
     monkeypatch.setattr(
         "launch.enter_raise_amount_for_game",
@@ -544,6 +623,11 @@ def test_execute_target_action_enters_raise_amount_before_click(monkeypatch: pyt
         decision_action="RAISE",
         raise_amount=820.0,
         runtime_offset=(5, 10),
+        hand_id=42,
+        street="TURN",
+        target_button_label="B1",
+        target_button_state="relance",
+        queued_at=0.0,
     )
 
     App._execute_target_action(app, command)
@@ -554,7 +638,50 @@ def test_execute_target_action_enters_raise_amount_before_click(monkeypatch: pyt
     ]
 
 
-def test_left_click_box_uses_human_clicker_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_execute_target_action_skips_stale_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = App.__new__(App)
+    calls = []
+    app.controller = SimpleNamespace(
+        last_view_state=ControllerViewState(
+            game_name="PokerTH",
+            scan_count=2,
+            scan_ok=False,
+            scan_failures=1,
+            hand_id=42,
+            street="TURN",
+        ),
+        game=SimpleNamespace(
+            table=SimpleNamespace(
+                scan=SimpleNamespace(runtime_region_offset=(5, 10)),
+            ),
+        ),
+    )
+
+    monkeypatch.setattr(
+        "launch.enter_raise_amount_for_game",
+        lambda *args, **kwargs: calls.append(("type", args, kwargs)) or "820",
+    )
+    app._left_click_box_center = lambda box: calls.append(("click", box))
+
+    command = SimpleNamespace(
+        click_box=(10, 20, 30, 40),
+        game_name="PokerTH",
+        decision_action="RAISE",
+        raise_amount=820.0,
+        runtime_offset=(5, 10),
+        hand_id=42,
+        street="TURN",
+        target_button_label="B1",
+        target_button_state="relance",
+        queued_at=0.0,
+    )
+
+    App._execute_target_action(app, command)
+
+    assert calls == []
+
+
+def test_left_click_box_uses_arc_clicker_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
     app = App.__new__(App)
     calls = []
 
@@ -572,7 +699,7 @@ def test_click_target_button_box_passes_clicker_defaults(monkeypatch: pytest.Mon
         calls.append((box, kwargs))
         return "clicked"
 
-    monkeypatch.setattr("objet.utils.human_clicker.click_xywh_box", fake_click_xywh_box)
+    monkeypatch.setattr("personal_arc_click.click_xywh_box", fake_click_xywh_box)
 
     assert click_target_button_box((10, 20, 30, 40)) == "clicked"
     assert calls == [
