@@ -1206,14 +1206,12 @@ class App(tk.Tk):
             return
 
         if state.decision_action == "FOLD":
-            self._last_click_signature = None
-            self._last_click_queued_at = 0.0
-            self._clear_pending_clicks()
             if not self._fold_has_positive_call(state):
+                self._last_click_signature = None
+                self._last_click_queued_at = 0.0
+                self._clear_pending_clicks()
                 self.var_click_status.set("clic: fold bloque sans call")
-            else:
-                self.var_click_status.set("clic: fold ignore, attente call")
-            return
+                return
 
         signature = self._click_signature(state, click_box)
         now = time.monotonic()

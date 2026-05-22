@@ -528,7 +528,7 @@ def test_auto_click_blocks_fold_when_no_call_amount() -> None:
     assert app.var_click_status.get() == "clic: fold bloque sans call"
 
 
-def test_auto_click_keeps_waiting_after_fold_with_call_amount() -> None:
+def test_auto_click_queues_fold_when_call_amount_is_positive() -> None:
     app = App.__new__(App)
     app.controller = SimpleNamespace(
         game=SimpleNamespace(
@@ -557,32 +557,14 @@ def test_auto_click_keeps_waiting_after_fold_with_call_amount() -> None:
             "bbox": [100, 200, 30, 40],
         },
     )
-    call_state = ControllerViewState(
-        game_name="PokerTH",
-        scan_count=2,
-        scan_ok=True,
-        scan_failures=0,
-        hand_id=42,
-        decision_action="CALL",
-        to_call=10.0,
-        target_button={
-            "label": "B2",
-            "state": "paie",
-            "bbox": [120, 220, 30, 40],
-        },
-    )
 
     App._maybe_queue_target_click(app, fold_state)
 
+    command = app._click_queue.get_nowait()
+    assert command.decision_action == "FOLD"
+    assert command.click_box == (105, 210, 30, 40)
     assert app._click_queue.empty()
     assert app.var_auto_click_target.get() is True
-    assert app.var_click_status.get() == "clic: fold ignore, attente call"
-
-    App._maybe_queue_target_click(app, call_state)
-
-    command = app._click_queue.get_nowait()
-    assert command.decision_action == "CALL"
-    assert command.click_box == (125, 230, 30, 40)
 
 
 def test_execute_target_action_enters_raise_amount_before_click(monkeypatch: pytest.MonkeyPatch) -> None:
