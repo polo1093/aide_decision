@@ -1,6 +1,7 @@
 # Project-specific ignores
 /screen/erreur/
 /poker/
+/Poker-master/
 /logs/
 /config/_interface_state.json
 
