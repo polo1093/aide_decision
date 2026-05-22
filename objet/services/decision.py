@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Literal, Optional
 
 from objet.services.game import Game
+from objet.services.equity import starting_hand_strength
 from objet.utils.logging_config import get_logger
 
 ActionType = Literal["WAIT", "FOLD", "CALL", "CHECK", "RAISE"]
@@ -18,6 +19,13 @@ class DecisionResult:
     action: ActionType
     reason: str
     raise_amount: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class DecisionConfig:
+    """Runtime configuration for the decision engine."""
+
+    mode: Literal["legacy", "pokermaster"] = "legacy"
 
 
 class Decision:
@@ -49,6 +57,45 @@ class Decision:
     RIVER_BIG_BET_MIN_POT_RATIO: float = 0.55
     RIVER_BIG_BET_MIN_1V1_EQUITY: float = 0.62
 
+    POKERMASTER_FREE_RAISE_EQUITY_BY_STREET = {
+        "PREFLOP": 0.74,
+        "FLOP": 0.74,
+        "TURN": 0.78,
+        "RIVER": 0.84,
+    }
+    POKERMASTER_PAID_RAISE_EQUITY_BY_STREET = {
+        "PREFLOP": 0.82,
+        "FLOP": 0.84,
+        "TURN": 0.88,
+        "RIVER": 0.94,
+    }
+    POKERMASTER_PAID_RAISE_EDGE: float = 0.24
+    POKERMASTER_RIVER_PRESSURE_POT_RATIO: float = 0.62
+    POKERMASTER_RIVER_PRESSURE_MIN_EQUITY: float = 0.72
+    POKERMASTER_LATE_STAGE_MIN_CALL: float = 240.0
+    POKERMASTER_LATE_STAGE_MIN_POT: float = 720.0
+    POKERMASTER_PREFLOP_SHOVE_STRENGTH: float = 0.72
+    POKERMASTER_PREFLOP_CALL_STRENGTH: float = 0.50
+    POKERMASTER_POSTFLOP_PRESSURE_EQUITY_BY_STREET = {
+        "FLOP": 0.54,
+        "TURN": 0.60,
+        "RIVER": 0.72,
+    }
+
+    def __init__(
+        self,
+        config: Optional[DecisionConfig] = None,
+        *,
+        mode: Optional[Literal["legacy", "pokermaster"]] = None,
+    ) -> None:
+        if config is not None and mode is not None:
+            raise ValueError("Use either config or mode, not both.")
+        if config is None:
+            config = DecisionConfig(mode=mode or "legacy")
+        if config.mode not in ("legacy", "pokermaster"):
+            raise ValueError(f"Mode de decision inconnu: {config.mode!r}")
+        self.config = config
+
     def decide(self, game: Game) -> DecisionResult:
         """Return the recommended action for the hero based on the current state."""
         if getattr(game, "new_party_detected", False):
@@ -72,6 +119,14 @@ class Decision:
 
         # No money to add: never CALL. Check weak/medium hands, raise strong ones.
         if to_call <= 0:
+            if self.config.mode == "pokermaster":
+                return self._decide_pokermaster_free_action(
+                    game,
+                    buttons=buttons,
+                    equity=equity,
+                    free_action=free_action,
+                    aggressive_action=aggressive_action,
+                )
             if free_action and aggressive_action and equity >= self._free_raise_equity_threshold(game):
                 return _log_decision(
                     DecisionResult(
@@ -102,6 +157,16 @@ class Decision:
         if call_max < to_call or edge < self.FOLD_EDGE:
             return _log_decision(DecisionResult(action="FOLD", reason="negative_call_ev"))
 
+        if self.config.mode == "pokermaster":
+            return self._decide_pokermaster_paid_action(
+                game,
+                buttons=buttons,
+                equity=equity,
+                edge=edge,
+                to_call=to_call,
+                aggressive_action=aggressive_action,
+            )
+
         if self._should_fold_river_board_only_hand(game, to_call=to_call):
             return _log_decision(DecisionResult(action="FOLD", reason="river_board_only_big_bet"))
 
@@ -128,6 +193,85 @@ class Decision:
         
         return _log_decision(DecisionResult(action="CALL", reason="call_profitable_or_close"))
 
+    def _decide_pokermaster_free_action(
+        self,
+        game: Game,
+        *,
+        buttons,
+        equity: float,
+        free_action: bool,
+        aggressive_action: bool,
+    ) -> DecisionResult:
+        if (
+            _game_street(game) == "PREFLOP"
+            and aggressive_action
+            and self._pokermaster_late_stage_pressure(game, to_call=0.0)
+            and self._hero_preflop_strength(game) >= self.POKERMASTER_PREFLOP_SHOVE_STRENGTH
+        ):
+            return _log_decision(
+                DecisionResult(
+                    action="RAISE",
+                    reason="pokermaster_short_stack_preflop_pressure",
+                    raise_amount=_recommended_raise_amount(game, buttons),
+                )
+            )
+
+        if free_action and aggressive_action and equity >= self._pokermaster_free_raise_equity_threshold(game):
+            return _log_decision(
+                DecisionResult(
+                    action="RAISE",
+                    reason="pokermaster_free_value_raise",
+                    raise_amount=_recommended_raise_amount(game, buttons),
+                )
+            )
+        if free_action:
+            return _log_decision(DecisionResult(action="CHECK", reason="free_option_no_call_needed"))
+        if _has_explicit_active_buttons(buttons):
+            return _log_decision(DecisionResult(action="WAIT", reason="call_amount_not_detected"))
+        return _log_decision(DecisionResult(action="CHECK", reason="free_option_no_call_needed"))
+
+    def _decide_pokermaster_paid_action(
+        self,
+        game: Game,
+        *,
+        buttons,
+        equity: float,
+        edge: float,
+        to_call: float,
+        aggressive_action: bool,
+    ) -> DecisionResult:
+        short_stack_preflop = self._decide_pokermaster_short_stack_preflop(
+            game,
+            buttons=buttons,
+            to_call=to_call,
+            aggressive_action=aggressive_action,
+        )
+        if short_stack_preflop is not None:
+            return short_stack_preflop
+
+        if self._pokermaster_should_fold_postflop_tournament_pressure(game, equity=equity, to_call=to_call):
+            return _log_decision(DecisionResult(action="FOLD", reason="pokermaster_postflop_tournament_pressure"))
+
+        if self._should_fold_river_board_only_hand(game, to_call=to_call):
+            return _log_decision(DecisionResult(action="FOLD", reason="river_board_only_big_bet"))
+
+        if self._should_fold_river_big_bet_with_weak_showdown(game, to_call=to_call):
+            return _log_decision(DecisionResult(action="FOLD", reason="river_big_bet_weak_showdown"))
+
+        if self._pokermaster_should_fold_river_pressure(game, equity=equity, to_call=to_call):
+            return _log_decision(DecisionResult(action="FOLD", reason="pokermaster_river_pressure"))
+
+        if aggressive_action and self._can_pokermaster_value_raise_paid_pot(game, equity=equity, edge=edge):
+            return _log_decision(
+                DecisionResult(
+                    action="RAISE",
+                    reason="pokermaster_paid_value_raise",
+                    raise_amount=_recommended_raise_amount(game, buttons),
+                )
+            )
+
+        return _log_decision(DecisionResult(action="CALL", reason="call_profitable_or_close"))
+
     def _free_raise_equity_threshold(self, game: Game) -> float:
         street = _game_street(game)
         return self.FREE_RAISE_EQUITY_BY_STREET.get(street, self.FREE_RAISE_EQUITY)
@@ -138,6 +282,39 @@ class Decision:
         street = _game_street(game)
         threshold = self.PAID_RAISE_EQUITY_BY_STREET.get(street, 0.84)
         return equity >= threshold
+
+    def _can_pokermaster_value_raise_paid_pot(self, game: Game, *, equity: float, edge: float) -> bool:
+        if edge < self.POKERMASTER_PAID_RAISE_EDGE:
+            return False
+        street = _game_street(game)
+        threshold = self.POKERMASTER_PAID_RAISE_EQUITY_BY_STREET.get(street, 0.88)
+        return equity >= threshold
+
+    def _decide_pokermaster_short_stack_preflop(
+        self,
+        game: Game,
+        *,
+        buttons,
+        to_call: float,
+        aggressive_action: bool,
+    ) -> Optional[DecisionResult]:
+        if _game_street(game) != "PREFLOP" or not self._pokermaster_late_stage_pressure(game, to_call=to_call):
+            return None
+
+        strength = self._hero_preflop_strength(game)
+        if aggressive_action and strength >= self.POKERMASTER_PREFLOP_SHOVE_STRENGTH:
+            return _log_decision(
+                DecisionResult(
+                    action="RAISE",
+                    reason="pokermaster_short_stack_preflop_pressure",
+                    raise_amount=_recommended_raise_amount(game, buttons),
+                )
+            )
+
+        if strength < self.POKERMASTER_PREFLOP_CALL_STRENGTH:
+            return _log_decision(DecisionResult(action="FOLD", reason="pokermaster_short_stack_preflop_fold"))
+
+        return None
 
     def _can_raise_small_bet_for_value(
         self,
@@ -176,6 +353,47 @@ class Decision:
         if equity_1v1 is None:
             return False
         return equity_1v1 < self.RIVER_BIG_BET_MIN_1V1_EQUITY
+
+    def _pokermaster_free_raise_equity_threshold(self, game: Game) -> float:
+        street = _game_street(game)
+        return self.POKERMASTER_FREE_RAISE_EQUITY_BY_STREET.get(street, 0.78)
+
+    def _pokermaster_should_fold_river_pressure(self, game: Game, *, equity: float, to_call: float) -> bool:
+        if _game_street(game) != "RIVER":
+            return False
+        pot = _as_positive_float(getattr(game.etat, "pot", None))
+        if pot is None or pot <= 0:
+            return False
+        return (to_call / pot) >= self.POKERMASTER_RIVER_PRESSURE_POT_RATIO and equity < self.POKERMASTER_RIVER_PRESSURE_MIN_EQUITY
+
+    def _pokermaster_should_fold_postflop_tournament_pressure(
+        self,
+        game: Game,
+        *,
+        equity: float,
+        to_call: float,
+    ) -> bool:
+        street = _game_street(game)
+        threshold = self.POKERMASTER_POSTFLOP_PRESSURE_EQUITY_BY_STREET.get(street)
+        if threshold is None or not self._pokermaster_late_stage_pressure(game, to_call=to_call):
+            return False
+        pot = _as_positive_float(getattr(game.etat, "pot", None))
+        if pot is None or pot <= 0:
+            return False
+        pressure_ratio = to_call / pot
+        return pressure_ratio >= 0.22 and equity < threshold
+
+    def _pokermaster_late_stage_pressure(self, game: Game, *, to_call: float) -> bool:
+        pot = _as_positive_float(getattr(game.etat, "pot", None)) or 0.0
+        return to_call >= self.POKERMASTER_LATE_STAGE_MIN_CALL or pot >= self.POKERMASTER_LATE_STAGE_MIN_POT
+
+    def _hero_preflop_strength(self, game: Game) -> float:
+        cards = getattr(game.etat, "cards", None)
+        if cards is None:
+            return 0.0
+        hero_cards = [getattr(card, "poker_card", None) for card in cards.me_cards()]
+        strength = starting_hand_strength(hero_cards)
+        return 0.0 if strength is None else strength
 
 
 def _log_decision(result: DecisionResult) -> DecisionResult:
@@ -325,4 +543,4 @@ def _iter_buttons(buttons):
         return iter(())
 
 
-__all__ = ["ActionType", "DecisionResult", "Decision"]
+__all__ = ["ActionType", "DecisionConfig", "DecisionResult", "Decision"]

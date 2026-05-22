@@ -6,7 +6,7 @@ from typing import Optional
 
 from objet.entities.buttons import Button, Buttons
 from objet.entities.card import Card, CardsState
-from objet.services.decision import Decision
+from objet.services.decision import Decision, DecisionConfig
 
 
 class DummyPlayer:
@@ -428,3 +428,147 @@ def test_check_is_recommended_when_no_raise_button_exists_even_with_strong_equit
 
     assert result.action == "CHECK"
     assert result.reason == "free_option_no_call_needed"
+
+
+def test_default_decision_config_keeps_legacy_mode() -> None:
+    decision = Decision()
+
+    assert decision.config == DecisionConfig()
+    assert decision.config.mode == "legacy"
+
+
+def test_pokermaster_mode_folds_paid_river_with_only_medium_equity() -> None:
+    game = DummyGame(_cards_state("AS", "KS"), buttons=DummyButtons(min_value=120.0), street="RIVER", pot_amount=180.0)
+    game.etat.Call_max = 500.0
+    game.etat.chance_win = 0.68
+    game.etat.equity_required = 0.40
+    decision = Decision(mode="pokermaster")
+
+    result = decision.decide(game)
+
+    assert result.action == "FOLD"
+    assert result.reason == "pokermaster_river_pressure"
+
+
+def test_pokermaster_mode_raises_only_with_aggressive_button_and_strong_equity() -> None:
+    buttons = Buttons(button=[Button(enabled=True, etat="paie", value=20.0)])
+    game = DummyGame(_cards_state("AS", "KS"), buttons=buttons, street="TURN", pot_amount=180.0)
+    game.etat.Call_max = 500.0
+    game.etat.chance_win = 0.92
+    game.etat.equity_required = 0.10
+    decision = Decision(mode="pokermaster")
+
+    result = decision.decide(game)
+
+    assert result.action == "CALL"
+    assert result.reason == "call_profitable_or_close"
+
+
+def test_pokermaster_mode_raises_strong_paid_turn_when_aggressive_button_exists() -> None:
+    buttons = Buttons(
+        button=[
+            Button(enabled=True, etat="paie", value=20.0),
+            Button(enabled=True, etat="relance", value=60.0),
+        ]
+    )
+    game = DummyGame(_cards_state("AS", "KS"), buttons=buttons, street="TURN", pot_amount=180.0)
+    game.etat.Call_max = 500.0
+    game.etat.chance_win = 0.92
+    game.etat.equity_required = 0.10
+    decision = Decision(mode="pokermaster")
+
+    result = decision.decide(game)
+
+    assert result.action == "RAISE"
+    assert result.reason == "pokermaster_paid_value_raise"
+    assert result.raise_amount == 120.0
+
+
+def test_pokermaster_mode_checks_free_medium_equity() -> None:
+    buttons = Buttons(
+        button=[
+            Button(enabled=True, etat="check", value=0.0),
+            Button(enabled=True, etat="mise", value=20.0),
+        ]
+    )
+    game = DummyGame(_cards_state("AS", "KS"), buttons=buttons, street="FLOP", pot_amount=120.0)
+    game.etat.chance_win = 0.60
+    decision = Decision(mode="pokermaster")
+
+    result = decision.decide(game)
+
+    assert result.action == "CHECK"
+    assert result.reason == "free_option_no_call_needed"
+
+
+def test_pokermaster_mode_does_not_bluff_weak_free_hand() -> None:
+    buttons = Buttons(
+        button=[
+            Button(enabled=True, etat="check", value=0.0),
+            Button(enabled=True, etat="mise", value=20.0),
+        ]
+    )
+    game = DummyGame(_cards_state("7S", "2D"), buttons=buttons, street="FLOP", pot_amount=120.0)
+    game.etat.chance_win = 0.30
+    decision = Decision(mode="pokermaster")
+
+    result = decision.decide(game)
+
+    assert result.action == "CHECK"
+    assert result.reason == "free_option_no_call_needed"
+
+
+def test_pokermaster_short_stack_preflop_folds_weak_late_call() -> None:
+    buttons = Buttons(button=[Button(enabled=True, etat="paie", value=320.0)])
+    game = DummyGame(_cards_state_with_board("7S", "2D", []), buttons=buttons, street="PREFLOP", pot_amount=960.0)
+    game.etat.Call_max = 5000.0
+    game.etat.chance_win = 0.55
+    game.etat.equity_required = 0.25
+    decision = Decision(mode="pokermaster")
+
+    result = decision.decide(game)
+
+    assert result.action == "FOLD"
+    assert result.reason == "pokermaster_short_stack_preflop_fold"
+
+
+def test_pokermaster_short_stack_preflop_raises_premium_with_raise_button() -> None:
+    buttons = Buttons(
+        button=[
+            Button(enabled=True, etat="paie", value=320.0),
+            Button(enabled=True, etat="relance", value=640.0),
+        ]
+    )
+    game = DummyGame(_cards_state_with_board("AS", "AD", []), buttons=buttons, street="PREFLOP", pot_amount=960.0)
+    game.etat.Call_max = 5000.0
+    game.etat.chance_win = 0.86
+    game.etat.equity_required = 0.25
+    decision = Decision(mode="pokermaster")
+
+    result = decision.decide(game)
+
+    assert result.action == "RAISE"
+    assert result.reason == "pokermaster_short_stack_preflop_pressure"
+
+
+def test_pokermaster_folds_medium_flop_draw_under_late_tournament_pressure() -> None:
+    buttons = Buttons(button=[Button(enabled=True, etat="paie", value=1320.0)])
+    game = DummyGame(
+        _cards_state_with_board(
+            "10S",
+            "7S",
+            [("6", "spades"), ("5", "spades"), ("J", "hearts")],
+        ),
+        buttons=buttons,
+        street="FLOP",
+        pot_amount=5120.0,
+    )
+    game.etat.Call_max = 5000.0
+    game.etat.chance_win = 0.50
+    game.etat.equity_required = 0.21
+    decision = Decision(mode="pokermaster")
+
+    result = decision.decide(game)
+
+    assert result.action == "FOLD"
+    assert result.reason == "pokermaster_postflop_tournament_pressure"

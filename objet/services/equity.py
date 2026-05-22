@@ -8,6 +8,9 @@ from __future__ import annotations
 
 from bisect import bisect_left
 from dataclasses import dataclass
+import json
+from functools import lru_cache
+from pathlib import Path
 import random
 from typing import Iterable, Optional, Sequence
 
@@ -17,6 +20,23 @@ from pokereval.hand_evaluator import HandEvaluator
 
 CardKey = tuple[int, int]
 Combo = tuple[PokerEvalCard, PokerEvalCard]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+POKERMASTER_PREFLOP_EQUITY_PATH = PROJECT_ROOT / "Poker-master" / "poker" / "decisionmaker" / "preflop_equity.json"
+RANK_TO_PREFLOP_NOTATION = {
+    2: "2",
+    3: "3",
+    4: "4",
+    5: "5",
+    6: "6",
+    7: "7",
+    8: "8",
+    9: "9",
+    10: "T",
+    11: "J",
+    12: "Q",
+    13: "K",
+    14: "A",
+}
 
 
 @dataclass(frozen=True)
@@ -106,6 +126,16 @@ def profiles_for_opponent_count(
     while len(out) < count:
         out.append(OpponentProfile(name=f"opponent_{len(out) + 1}"))
     return out
+
+
+def starting_hand_strength(cards: Sequence[PokerEvalCard]) -> Optional[float]:
+    """Return normalized preflop strength for exactly two known cards."""
+
+    if len(cards) != 2 or any(card is None for card in cards):
+        return None
+    if any(not hasattr(card, "rank") or not hasattr(card, "suit") for card in cards):
+        return None
+    return _starting_hand_strength((cards[0], cards[1]))
 
 
 def weighted_monte_carlo_equity(
@@ -250,6 +280,10 @@ def _combo_weight(combo: Combo, profile: OpponentProfile) -> float:
 
 
 def _starting_hand_strength(combo: Combo) -> float:
+    ranked_strength = _pokermaster_preflop_strength(combo)
+    if ranked_strength is not None:
+        return ranked_strength
+
     left, right = combo
     ranks = sorted((int(left.rank), int(right.rank)), reverse=True)
     high, low = ranks
@@ -267,6 +301,54 @@ def _starting_hand_strength(combo: Combo) -> float:
     ace_bonus = 0.06 if high == 14 else 0.0
 
     return _clamp01(0.05 + high_score + low_score + connected + suited_bonus + broadway_bonus + ace_bonus)
+
+
+def _pokermaster_preflop_strength(combo: Combo) -> Optional[float]:
+    ranking = _load_pokermaster_preflop_ranking()
+    if not ranking:
+        return None
+
+    key = _pokermaster_preflop_key(combo)
+    equity = ranking.get(key)
+    if equity is None:
+        return None
+
+    min_equity = min(ranking.values())
+    max_equity = max(ranking.values())
+    if max_equity <= min_equity:
+        return None
+    return _clamp01((equity - min_equity) / (max_equity - min_equity))
+
+
+def _pokermaster_preflop_key(combo: Combo) -> str:
+    left, right = combo
+    ranks = sorted((int(left.rank), int(right.rank)))
+    low, high = ranks
+    low_label = RANK_TO_PREFLOP_NOTATION[low]
+    high_label = RANK_TO_PREFLOP_NOTATION[high]
+    if low == high:
+        return f"{low_label}{high_label}"
+    suited = "S" if int(left.suit) == int(right.suit) else "O"
+    return f"{low_label}{high_label}{suited}"
+
+
+@lru_cache(maxsize=1)
+def _load_pokermaster_preflop_ranking() -> dict[str, float]:
+    try:
+        with POKERMASTER_PREFLOP_EQUITY_PATH.open("r", encoding="utf-8") as handle:
+            raw = json.load(handle)
+    except OSError:
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+
+    ranking: dict[str, float] = {}
+    for key, value in raw.items():
+        try:
+            ranking[str(key).upper()] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return ranking
 
 
 def _weighted_equity_seed(
@@ -302,7 +384,9 @@ def _clamp01(value: float) -> float:
 __all__ = [
     "OpponentProfile",
     "WeightedCombo",
+    "POKERMASTER_PREFLOP_EQUITY_PATH",
     "opponent_profiles_from_players",
     "profiles_for_opponent_count",
+    "starting_hand_strength",
     "weighted_monte_carlo_equity",
 ]

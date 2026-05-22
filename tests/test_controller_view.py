@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from objet.services.controller import ControllerViewState, button_target_for_action
+from objet.services.controller import Controller, ControllerViewState, button_target_for_action
 
 
 def test_failed_scan_keeps_legacy_text_output() -> None:
@@ -79,6 +79,25 @@ def test_wait_has_no_target_button() -> None:
     buttons = [_button("check", enabled=True, bbox=(1, 2, 3, 4))]
 
     assert button_target_for_action(buttons, "WAIT") is None
+
+
+def test_controller_defaults_to_legacy_decision_mode() -> None:
+    controller = Controller(
+        telemetry_enabled=False,
+        player_history_enabled=False,
+    )
+
+    assert controller.decision.config.mode == "legacy"
+
+
+def test_controller_passes_pokermaster_decision_mode() -> None:
+    controller = Controller(
+        decision_mode="pokermaster",
+        telemetry_enabled=False,
+        player_history_enabled=False,
+    )
+
+    assert controller.decision.config.mode == "pokermaster"
 
 
 def _button(state: str, *, enabled: bool, bbox, text: str = "", value: float = 0.0):

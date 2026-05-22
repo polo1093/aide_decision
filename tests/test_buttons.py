@@ -85,6 +85,16 @@ def test_apply_scan_accepts_english_pokerth_buttons() -> None:
     assert button.value == 20.0
 
 
+def test_apply_scan_keeps_explicit_dollar_800_call_button() -> None:
+    button = Button()
+
+    button.apply_scan("call $800")
+
+    assert button.is_activate() is True
+    assert button.etat == "paie"
+    assert button.value == 800.0
+
+
 def test_apply_scan_ignores_function_key_for_fold() -> None:
     button = Button()
 

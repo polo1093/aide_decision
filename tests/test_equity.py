@@ -7,6 +7,7 @@ from objet.services.equity import (
     OpponentProfile,
     opponent_profiles_from_players,
     profiles_for_opponent_count,
+    starting_hand_strength,
     weighted_monte_carlo_equity,
 )
 from objet.services.game import Game
@@ -61,6 +62,19 @@ def test_tight_aggressive_range_reduces_weak_hero_equity() -> None:
     )
 
     assert equity_vs_tight < equity_vs_loose
+
+
+def test_starting_hand_strength_uses_pokermaster_preflop_ranking() -> None:
+    aces = starting_hand_strength(_cards(("A", "hearts"), ("A", "diamonds")))
+    seven_deuce = starting_hand_strength(_cards(("7", "hearts"), ("2", "diamonds")))
+    ace_king_suited = starting_hand_strength(_cards(("A", "hearts"), ("K", "hearts")))
+    ace_king_offsuit = starting_hand_strength(_cards(("A", "hearts"), ("K", "diamonds")))
+
+    assert aces is not None
+    assert seven_deuce is not None
+    assert ace_king_suited is not None
+    assert ace_king_offsuit is not None
+    assert aces > ace_king_suited > ace_king_offsuit > seven_deuce
 
 
 def test_profiles_reflect_observed_paid_player_state() -> None:

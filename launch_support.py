@@ -358,7 +358,8 @@ def click_target_button_box(click_box: tuple[int, int, int, int]) -> object:
 
     x, y, width, height = click_box
     target_point = (int(round(x + width / 2.0)), int(round(y + height / 2.0)))
-    return click_xywh_box(
+    started = time.perf_counter()
+    result = click_xywh_box(
         click_box,
         button="left",
         target_point=target_point,
@@ -373,6 +374,13 @@ def click_target_button_box(click_box: tuple[int, int, int, int]) -> object:
         spiral_radius=5.0,
         jitter=0.6,
     )
+    logger.info(
+        "clic_bouton_cible_fait box=%s target=%s elapsed_ms=%.1f",
+        click_box,
+        target_point,
+        (time.perf_counter() - started) * 1000.0,
+    )
+    return result
 
 
 def enter_raise_amount_for_game(

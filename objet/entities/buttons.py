@@ -149,7 +149,13 @@ def float_in_str(texte: str, *, state: str = "") -> float:
         return 0.0
 
     token = matches[-1].strip()
-    if state.lower() == "paie" and re.fullmatch(r"[458]\d{2}", token):
+    has_currency_symbol = any(symbol in texte for symbol in ("$", "€", "£", "â‚¬", "Â£"))
+    if (
+        state.lower() == "paie"
+        and not has_currency_symbol
+        and re.fullmatch(r"[458]\d{2}", token)
+        and not re.fullmatch(r"[0]+", token[1:])
+    ):
         token = token[1:]
 
     token = re.sub(r"(?<!\d)5\s+(?=\d{1,3}(?:\s+\d{3})+(?:[.,]\d+)?\b)", "", token)

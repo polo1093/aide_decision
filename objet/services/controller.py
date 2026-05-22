@@ -113,6 +113,7 @@ class Controller:
         player_history_dir: Optional[Path | str] = None,
         player_history_enabled: bool = True,
         player_history_store=None,
+        decision_mode: str = "legacy",
     ):
         self.count = 0
         self.running = False
@@ -135,7 +136,7 @@ class Controller:
             )
         )
         self.game = Game(coord_path=self.coord_path, player_history=self.player_history)
-        self.decision = Decision()
+        self.decision = Decision(mode=decision_mode)
         self.telemetry = (
             telemetry_recorder
             if telemetry_recorder is not None

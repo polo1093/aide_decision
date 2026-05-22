@@ -24,7 +24,9 @@ from launch import (
     normalise_game_name,
     normalise_scan_interval_ms,
     profile_status,
+    parse_args,
     save_interface_state,
+    select_initial_decision_mode,
     select_initial_game,
     script_path_for,
 )
@@ -49,6 +51,7 @@ def test_interface_state_round_trip(tmp_path: Path) -> None:
     save_interface_state(
         {
             "game_name": "PokerTH",
+            "decision_mode": "pokermaster",
             "window_geometry": "1200x800+10+20",
             "window_state": "zoomed",
         },
@@ -57,6 +60,7 @@ def test_interface_state_round_trip(tmp_path: Path) -> None:
 
     assert load_interface_state(path) == {
         "game_name": "PokerTH",
+        "decision_mode": "pokermaster",
         "window_geometry": "1200x800+10+20",
         "window_state": "zoomed",
     }
@@ -68,6 +72,12 @@ def test_select_initial_game_uses_cli_then_saved_then_default() -> None:
     assert select_initial_game("PMU", {"game_name": "PokerTH"}, profiles) == "PMU"
     assert select_initial_game(None, {"game_name": "PokerTH"}, profiles) == "PokerTH"
     assert select_initial_game(None, {"game_name": "Missing"}, profiles) == "PMU"
+
+
+def test_select_initial_decision_mode_uses_explicit_cli_then_saved_then_legacy() -> None:
+    assert select_initial_decision_mode("legacy", {"decision_mode": "pokermaster"}, cli_explicit=True) == "legacy"
+    assert select_initial_decision_mode("legacy", {"decision_mode": "pokermaster"}, cli_explicit=False) == "pokermaster"
+    assert select_initial_decision_mode("legacy", {"decision_mode": "missing"}, cli_explicit=False) == "legacy"
 
 
 def test_script_path_for_resolves_existing_script() -> None:
@@ -86,6 +96,64 @@ def test_normalise_scan_interval_accepts_large_values() -> None:
 def test_normalise_scan_interval_keeps_minimum_and_fallback() -> None:
     assert normalise_scan_interval_ms("1") == 25
     assert normalise_scan_interval_ms("pas un nombre", fallback=750) == 750
+
+
+def test_parse_args_defaults_to_legacy_decision_mode() -> None:
+    args = parse_args([])
+
+    assert args.decision_mode == "legacy"
+    assert args.decision_mode_explicit is False
+
+
+def test_parse_args_accepts_pokermaster_decision_mode() -> None:
+    args = parse_args(["--decision-mode", "pokermaster"])
+
+    assert args.decision_mode == "pokermaster"
+    assert args.decision_mode_explicit is True
+
+
+def test_parse_args_accepts_equals_form_as_explicit_decision_mode() -> None:
+    args = parse_args(["--decision-mode=pokermaster"])
+
+    assert args.decision_mode == "pokermaster"
+    assert args.decision_mode_explicit is True
+
+
+def test_switch_decision_mode_replaces_current_decision_engine() -> None:
+    app = App.__new__(App)
+    app.game_name = "PMU"
+    app.decision_mode = "legacy"
+    app.var_decision_mode = _Var("pokermaster")
+    app.controller = SimpleNamespace(decision=SimpleNamespace(config=SimpleNamespace(mode="legacy")))
+    app.stop_scan = lambda: None
+    app._save_interface_state = lambda: None
+
+    App._switch_decision_mode(app)
+
+    assert app.decision_mode == "pokermaster"
+    assert app.controller.decision.config.mode == "pokermaster"
+
+
+def test_save_interface_state_includes_decision_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = App.__new__(App)
+    app.var_game = _Var("PokerTH")
+    app.game_name = "PMU"
+    app.decision_mode = "pokermaster"
+    app.geometry = lambda: "1200x800+10+20"
+    app.state = lambda: "normal"
+    saved = []
+    monkeypatch.setattr("launch.save_interface_state", lambda data: saved.append(data))
+
+    App._save_interface_state(app)
+
+    assert saved == [
+        {
+            "game_name": "PokerTH",
+            "decision_mode": "pokermaster",
+            "window_geometry": "1200x800+10+20",
+            "window_state": "normal",
+        }
+    ]
 
 
 def test_build_quick_setup_args_includes_video_and_selected_skip_flags(tmp_path: Path) -> None:

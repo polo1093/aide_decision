@@ -47,17 +47,21 @@ def _pyautogui():
     return pyautogui
 
 
-def check_emergency_stop() -> None:
-    pyautogui = _pyautogui()
+def check_emergency_stop(pyautogui_module=None) -> None:
+    pyautogui = pyautogui_module or _pyautogui()
     fail_safe_check = getattr(pyautogui, "_failSafeCheck", None)
     if fail_safe_check is not None:
         fail_safe_check()
 
 
-def interruptible_sleep(seconds: float, *, step: float = 0.01) -> None:
+def interruptible_sleep(seconds: float, *, step: float = 0.01, pyautogui_module=None) -> None:
+    if seconds <= 0:
+        return
+
+    pyautogui = pyautogui_module or _pyautogui()
     end = time.perf_counter() + max(0.0, seconds)
     while True:
-        check_emergency_stop()
+        check_emergency_stop(pyautogui)
         remaining = end - time.perf_counter()
         if remaining <= 0:
             return
@@ -306,11 +310,20 @@ def move_path(points: Iterable[Point], duration: float) -> None:
         return
 
     pyautogui = _pyautogui()
-    base_step = duration / len(points)
-    for point in points:
-        check_emergency_stop()
-        pyautogui.moveTo(point[0], point[1], duration=max(0.001, base_step * 0.30))
-        interruptible_sleep(max(0.0005, base_step * random.uniform(0.015, 0.055)), step=0.001)
+    started = time.perf_counter()
+    planned_duration = max(0.0, duration)
+    last_index = len(points) - 1
+
+    for index, point in enumerate(points):
+        check_emergency_stop(pyautogui)
+        pyautogui.moveTo(point[0], point[1], duration=0)
+        if index >= last_index or planned_duration <= 0:
+            continue
+
+        next_at = started + planned_duration * ((index + 1) / last_index)
+        remaining = next_at - time.perf_counter()
+        if remaining > 0:
+            interruptible_sleep(remaining, step=0.001, pyautogui_module=pyautogui)
 
 
 def move_to_point(

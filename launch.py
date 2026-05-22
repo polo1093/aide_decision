@@ -13,6 +13,7 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Optional
 
 from objet.services.controller import Controller, ControllerViewState
+from objet.services.decision import Decision
 from objet.utils.debug_capture import capture_blocking_error_screen
 from objet.utils.logging_config import (
     configure_logging,
@@ -68,6 +69,7 @@ from launch_support import (
 
 
 logger = get_logger(__name__)
+DECISION_MODES = ("legacy", "pokermaster")
 
 
 class App(tk.Tk):
@@ -88,6 +90,8 @@ class App(tk.Tk):
 
         self.controller = controller
         self.game_name = game_name
+        decision_config = getattr(getattr(controller, "decision", None), "config", None)
+        self.decision_mode = getattr(decision_config, "mode", "legacy")
         self.game_profiles = available_game_names()
 
         self.scanning = False
@@ -159,6 +163,15 @@ class App(tk.Tk):
             width=18,
             textvariable=self.var_game,
             values=self.game_profiles,
+            state="readonly",
+        )
+        self.lbl_decision_mode = ttk.Label(self.frm_top, text="Mode decision")
+        self.var_decision_mode = tk.StringVar(value=self.decision_mode)
+        self.cmb_decision_mode = ttk.Combobox(
+            self.frm_top,
+            width=12,
+            textvariable=self.var_decision_mode,
+            values=DECISION_MODES,
             state="readonly",
         )
         self.lbl_interval = ttk.Label(self.frm_top, text="Interval ms")
@@ -329,6 +342,8 @@ class App(tk.Tk):
         self.btn_snap.pack(side="left", padx=(0, 16))
         self.lbl_game.pack(side="left")
         self.cmb_game.pack(side="left", padx=(6, 14))
+        self.lbl_decision_mode.pack(side="left")
+        self.cmb_decision_mode.pack(side="left", padx=(6, 14))
         self.lbl_interval.pack(side="left")
         self.ent_interval.pack(side="left", padx=(6, 16))
         self.lbl_perf.pack(side="left", padx=(10, 0))
@@ -436,6 +451,7 @@ class App(tk.Tk):
         self.ent_interval.bind("<Return>", lambda _e: self._update_interval())
         self.ent_interval.bind("<FocusOut>", lambda _e: self._update_interval())
         self.cmb_game.bind("<<ComboboxSelected>>", lambda _e: self._switch_game())
+        self.cmb_decision_mode.bind("<<ComboboxSelected>>", lambda _e: self._switch_decision_mode())
 
     def _apply_empty_state(self) -> None:
         self.var_scan.set("pret")
@@ -472,6 +488,7 @@ class App(tk.Tk):
             self.controller = Controller(
                 game_name=selected,
                 coord_path=CONFIG_ROOT / selected / "coordinates.json",
+                decision_mode=self.decision_mode,
             )
         except Exception as exc:
             self.var_game.set(self.game_name)
@@ -487,6 +504,20 @@ class App(tk.Tk):
         self._save_interface_state()
         self._last_auto_identify_t = 0.0
 
+    def _switch_decision_mode(self) -> None:
+        selected = self.var_decision_mode.get().strip()
+        if selected not in DECISION_MODES:
+            self.var_decision_mode.set(self.decision_mode)
+            return
+        if selected == self.decision_mode:
+            return
+
+        self.stop_scan()
+        logger.info("changement_mode_decision old=%s new=%s game=%s", self.decision_mode, selected, self.game_name)
+        self.controller.decision = Decision(mode=selected)
+        self.decision_mode = selected
+        self._save_interface_state()
+
     def _on_close(self) -> None:
         self.stop_scan()
         self._unregister_click_hotkey()
@@ -498,6 +529,7 @@ class App(tk.Tk):
         save_interface_state(
             {
                 "game_name": self._current_game_name(),
+                "decision_mode": self.decision_mode,
                 "window_geometry": self.geometry(),
                 "window_state": self.state(),
             }
@@ -1541,12 +1573,40 @@ class App(tk.Tk):
 
 
 def parse_args(argv=None):
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(description="UI autour de Controller.run_cycle()")
     parser.add_argument("--interval", type=int, default=DEFAULT_SCAN_INTERVAL_MS, help="Intervalle entre deux scans en ms (minimum 25)")
     parser.add_argument("--game", help="Nom du jeu/profil dans config/ (sinon dernier profil utilise)")
     parser.add_argument("--list-games", action="store_true", help="Liste les profils disponibles puis quitte.")
     parser.add_argument("--snapshot", action="store_true", help="Execute un seul scan dans le terminal.")
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--decision-mode",
+        choices=("legacy", "pokermaster"),
+        default="legacy",
+        help="Moteur de decision a utiliser.",
+    )
+    args = parser.parse_args(raw_argv)
+    args.decision_mode_explicit = any(
+        arg == "--decision-mode" or arg.startswith("--decision-mode=")
+        for arg in raw_argv
+    )
+    return args
+
+
+def select_initial_decision_mode(
+    cli_mode: Optional[str],
+    interface_state: dict,
+    *,
+    cli_explicit: bool = False,
+) -> str:
+    if cli_explicit:
+        return _normalise_decision_mode(cli_mode)
+    return _normalise_decision_mode(interface_state.get("decision_mode") or cli_mode)
+
+
+def _normalise_decision_mode(value: object) -> str:
+    mode = str(value or "").strip()
+    return mode if mode in DECISION_MODES else "legacy"
 
 
 def main(argv=None) -> None:
@@ -1558,18 +1618,25 @@ def main(argv=None) -> None:
 
     interface_state = load_interface_state()
     initial_game = select_initial_game(args.game, interface_state, available_game_names())
+    initial_decision_mode = select_initial_decision_mode(
+        args.decision_mode,
+        interface_state,
+        cli_explicit=args.decision_mode_explicit,
+    )
 
     configure_logging()
     with session_log("interface") as log_file:
         logger.info(
-            "debut interface interval_ms=%s game=%s log=%s",
+            "debut interface interval_ms=%s game=%s decision_mode=%s log=%s",
             args.interval,
             initial_game,
+            initial_decision_mode,
             log_path_value(log_file),
         )
         controller = Controller(
             game_name=initial_game,
             coord_path=CONFIG_ROOT / initial_game / "coordinates.json",
+            decision_mode=initial_decision_mode,
         )
         if args.snapshot:
             try:
