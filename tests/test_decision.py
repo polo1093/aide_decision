@@ -500,6 +500,27 @@ def test_legacy_raises_premium_preflop_even_when_multiway_equity_is_below_paid_r
     assert result.raise_amount == 40.0
 
 
+def test_waits_instead_of_folding_premium_preflop_when_call_amount_is_suspicious() -> None:
+    buttons = Buttons(
+        button=[
+            Button(enabled=True, etat="relance", value=4640.0),
+            Button(enabled=True, etat="paie", value=4320.0),
+            Button(enabled=True, etat="fold", value=0.0),
+        ]
+    )
+    game = DummyGame(_cards_state_with_board("KH", "AH", []), buttons=buttons, street="PREFLOP", pot_amount=480.0)
+    game.etat.Call_max = 184.0
+    game.etat.chance_win = 0.278
+    game.etat.equity_required = 0.90
+    game.range_position = "BTN"
+    decision = Decision()
+
+    result = decision.decide(game)
+
+    assert result.action == "WAIT"
+    assert result.reason == "preflop_premium_call_amount_suspicious"
+
+
 def test_legacy_still_waits_for_equity_after_preflop() -> None:
     game = DummyGame(
         _cards_state_with_board("AS", "KS", [("A", "hearts"), ("7", "clubs"), ("2", "spades")]),

@@ -86,6 +86,7 @@ class Decision:
     RANGE_ANALYZER_DEFAULT_POSITION = "BTN"
     RANGE_ANALYZER_PREFLOP_OPEN_FREQUENCY: int = 50
     RANGE_ANALYZER_PREFLOP_STRONG_RAISE_FREQUENCY: int = 75
+    PREFLOP_SUSPICIOUS_CALL_POT_RATIO: float = 4.0
 
     def __init__(
         self,
@@ -182,6 +183,9 @@ class Decision:
             call_max,
             to_call,
         )
+
+        if self._should_wait_on_suspicious_premium_preflop_call(game, to_call=to_call):
+            return _log_decision(DecisionResult(action="WAIT", reason="preflop_premium_call_amount_suspicious"))
 
         if call_max < to_call or edge < self.FOLD_EDGE:
             return _log_decision(DecisionResult(action="FOLD", reason="negative_call_ev"))
@@ -474,6 +478,17 @@ class Decision:
         if hand is None:
             return None
         return get_hand_action(_range_analyzer_position(game), hand)
+
+    def _should_wait_on_suspicious_premium_preflop_call(self, game: Game, *, to_call: float) -> bool:
+        if _game_street(game) != "PREFLOP" or to_call <= 0:
+            return False
+        pot = _as_positive_float(getattr(game.etat, "pot", None))
+        if pot is None or pot <= 0 or (to_call / pot) < self.PREFLOP_SUSPICIOUS_CALL_POT_RATIO:
+            return False
+        range_action = self._hero_range_action(game)
+        if range_action is None:
+            return False
+        return range_action.raise_frequency >= self.RANGE_ANALYZER_PREFLOP_STRONG_RAISE_FREQUENCY
 
 
 def _log_decision(result: DecisionResult) -> DecisionResult:
