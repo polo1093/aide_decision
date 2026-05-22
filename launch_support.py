@@ -411,6 +411,11 @@ def _decision_explanation(action: str, reason: str) -> str:
         "small_bet_value_protection": "Petite mise adverse: relance de value/protection proposee.",
         "positive_edge_raise": "Relance proposee: equity nettement au-dessus de l'equity minimale.",
         "call_profitable_or_close": "Call rentable ou proche du seuil.",
+        "range_analyzer_preflop_open": "Range Analyzer: main dans la range d'ouverture, relance proposee.",
+        "range_analyzer_preflop_check": "Range Analyzer: option gratuite preflop, pas de relance forcee.",
+        "range_analyzer_preflop_out_of_range": "Range Analyzer: main hors range preflop, fold propose.",
+        "range_analyzer_preflop_value_raise": "Range Analyzer: main forte preflop, relance proposee.",
+        "range_analyzer_preflop_continue": "Range Analyzer: main defendable preflop, call propose.",
     }
     detail = explanations.get(reason, reason)
     return f"{detail} ({reason})" if reason and detail != reason else detail

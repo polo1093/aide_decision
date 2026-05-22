@@ -16,6 +16,7 @@ from objet.utils.logging_config import get_logger
 
 
 LOGGER = get_logger(__name__)
+DEFAULT_HERO_POSITION = "BTN"
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,9 @@ class ControllerViewState:
     decision_action: str = "WAIT"
     decision_reason: str = ""
     raise_amount: object = None
+    hero_position: str = DEFAULT_HERO_POSITION
+    hero_position_reason: str = ""
+    hero_position_confidence: object = None
 
     def notice(self) -> str:
         if self.new_party_state is True:
@@ -84,6 +88,7 @@ class ControllerViewState:
             f"{notice_line}"
             f"Partie: {self.hand_id}\n"
             f"Jeu: {self.game_name}\n"
+            f"Position hero: {self.hero_position} ({self.hero_position_reason})\n"
             f"Street: {self.street}\n"
             f"Mes cartes: {self.hero_scan}\n"
             f"Cartes sur le board: {self.board_scan}\n"
@@ -114,6 +119,8 @@ class Controller:
         player_history_enabled: bool = True,
         player_history_store=None,
         decision_mode: str = "legacy",
+        hero_position: str = DEFAULT_HERO_POSITION,
+        auto_hero_position: bool = True,
     ):
         self.count = 0
         self.running = False
@@ -125,7 +132,12 @@ class Controller:
         from objet.services.game import Game
         from objet.services.player_history import DEFAULT_PLAYER_HISTORY_DIR, PlayerHistoryStore
         from objet.services.telemetry import DEFAULT_TELEMETRY_DIR, TelemetryRecorder
+        from objet.services.range_analyzer import normalize_position
 
+        self.hero_position = normalize_position(hero_position) or DEFAULT_HERO_POSITION
+        self.auto_hero_position = bool(auto_hero_position)
+        self.hero_position_reason = "manual_fallback"
+        self.hero_position_confidence = 0.0
         self.player_history = (
             player_history_store
             if player_history_store is not None
@@ -136,6 +148,7 @@ class Controller:
             )
         )
         self.game = Game(coord_path=self.coord_path, player_history=self.player_history)
+        self.set_hero_position(self.hero_position)
         self.decision = Decision(mode=decision_mode)
         self.telemetry = (
             telemetry_recorder
@@ -154,11 +167,37 @@ class Controller:
     def clear_player_history(self) -> Path:
         return self.player_history.clear()
 
+    def set_hero_position(self, position: str) -> None:
+        from objet.services.range_analyzer import normalize_position
+
+        normalized = normalize_position(position) or DEFAULT_HERO_POSITION
+        self.hero_position = normalized
+        self.hero_position_reason = "manual_fallback"
+        self.hero_position_confidence = 0.0
+        setattr(self.game, "range_position", normalized)
+        if getattr(self.game, "etat", None) is not None:
+            setattr(self.game.etat, "range_position", normalized)
+
+    def detect_hero_position(self) -> None:
+        if not self.auto_hero_position:
+            self.set_hero_position(self.hero_position)
+            return
+        from objet.services.position_detector import detect_hero_position
+
+        detection = detect_hero_position(self.game, fallback=self.hero_position)
+        self.hero_position = detection.position
+        self.hero_position_reason = detection.reason
+        self.hero_position_confidence = detection.confidence
+        setattr(self.game, "range_position", detection.position)
+        if getattr(self.game, "etat", None) is not None:
+            setattr(self.game.etat, "range_position", detection.position)
+
     def run_cycle(self) -> ControllerViewState:
         self.count += 1
         LOGGER.info("debut cycle_controller count=%s", self.count)
         if self.game.scan_to_data_table():
             new_party = self.game.update_from_scan()
+            self.detect_hero_position()
             result = self.game_stat_to_view_state(new_party)
             self.last_view_state = result
             self.telemetry.record_cycle(game=self.game, view_state=result)
@@ -243,6 +282,9 @@ class Controller:
             decision_action=decision_result.action,
             decision_reason=decision_result.reason,
             raise_amount=round_sig(decision_result.raise_amount),
+            hero_position=self.hero_position,
+            hero_position_reason=self.hero_position_reason,
+            hero_position_confidence=round_sig(self.hero_position_confidence),
         )
 
 

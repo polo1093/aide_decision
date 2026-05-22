@@ -14,6 +14,7 @@ from typing import Optional
 
 from objet.services.controller import Controller, ControllerViewState
 from objet.services.decision import Decision
+from objet.services.range_analyzer import POSITIONS as HERO_POSITIONS
 from objet.utils.debug_capture import capture_blocking_error_screen
 from objet.utils.logging_config import (
     configure_logging,
@@ -70,6 +71,7 @@ from launch_support import (
 
 logger = get_logger(__name__)
 DECISION_MODES = ("legacy", "pokermaster")
+DEFAULT_HERO_POSITION = "BTN"
 
 
 class App(tk.Tk):
@@ -92,6 +94,7 @@ class App(tk.Tk):
         self.game_name = game_name
         decision_config = getattr(getattr(controller, "decision", None), "config", None)
         self.decision_mode = getattr(decision_config, "mode", "legacy")
+        self.hero_position = getattr(controller, "hero_position", DEFAULT_HERO_POSITION)
         self.game_profiles = available_game_names()
 
         self.scanning = False
@@ -172,6 +175,15 @@ class App(tk.Tk):
             width=12,
             textvariable=self.var_decision_mode,
             values=DECISION_MODES,
+            state="readonly",
+        )
+        self.lbl_hero_position = ttk.Label(self.frm_top, text="Position auto")
+        self.var_hero_position = tk.StringVar(value=self.hero_position)
+        self.cmb_hero_position = ttk.Combobox(
+            self.frm_top,
+            width=5,
+            textvariable=self.var_hero_position,
+            values=HERO_POSITIONS,
             state="readonly",
         )
         self.lbl_interval = ttk.Label(self.frm_top, text="Interval ms")
@@ -344,6 +356,8 @@ class App(tk.Tk):
         self.cmb_game.pack(side="left", padx=(6, 14))
         self.lbl_decision_mode.pack(side="left")
         self.cmb_decision_mode.pack(side="left", padx=(6, 14))
+        self.lbl_hero_position.pack(side="left")
+        self.cmb_hero_position.pack(side="left", padx=(6, 14))
         self.lbl_interval.pack(side="left")
         self.ent_interval.pack(side="left", padx=(6, 16))
         self.lbl_perf.pack(side="left", padx=(10, 0))
@@ -452,6 +466,7 @@ class App(tk.Tk):
         self.ent_interval.bind("<FocusOut>", lambda _e: self._update_interval())
         self.cmb_game.bind("<<ComboboxSelected>>", lambda _e: self._switch_game())
         self.cmb_decision_mode.bind("<<ComboboxSelected>>", lambda _e: self._switch_decision_mode())
+        self.cmb_hero_position.bind("<<ComboboxSelected>>", lambda _e: self._switch_hero_position())
 
     def _apply_empty_state(self) -> None:
         self.var_scan.set("pret")
@@ -489,6 +504,7 @@ class App(tk.Tk):
                 game_name=selected,
                 coord_path=CONFIG_ROOT / selected / "coordinates.json",
                 decision_mode=self.decision_mode,
+                hero_position=self.hero_position,
             )
         except Exception as exc:
             self.var_game.set(self.game_name)
@@ -518,6 +534,19 @@ class App(tk.Tk):
         self.decision_mode = selected
         self._save_interface_state()
 
+    def _switch_hero_position(self) -> None:
+        selected = self.var_hero_position.get().strip().upper()
+        if selected not in HERO_POSITIONS:
+            self.var_hero_position.set(self.hero_position)
+            return
+        if selected == self.hero_position:
+            return
+
+        logger.info("changement_position_fallback old=%s new=%s game=%s", self.hero_position, selected, self.game_name)
+        self.controller.set_hero_position(selected)
+        self.hero_position = selected
+        self._save_interface_state()
+
     def _on_close(self) -> None:
         self.stop_scan()
         self._unregister_click_hotkey()
@@ -530,6 +559,7 @@ class App(tk.Tk):
             {
                 "game_name": self._current_game_name(),
                 "decision_mode": self.decision_mode,
+                "hero_position": self.hero_position,
                 "window_geometry": self.geometry(),
                 "window_state": self.state(),
             }
@@ -1084,6 +1114,9 @@ class App(tk.Tk):
         self.var_scan.set("OK" if state.scan_ok else f"table absente ({state.scan_failures})")
         self.var_hand.set(_display_value(state.hand_id))
         self.var_street.set(state.street)
+        if state.hero_position in HERO_POSITIONS:
+            self.hero_position = state.hero_position
+            self.var_hero_position.set(state.hero_position)
         self.var_notice.set(state.notice())
         active_buttons = [button for button in state.buttons if button]
         action_available = bool(active_buttons)
@@ -1581,13 +1614,23 @@ def parse_args(argv=None):
     parser.add_argument("--snapshot", action="store_true", help="Execute un seul scan dans le terminal.")
     parser.add_argument(
         "--decision-mode",
-        choices=("legacy", "pokermaster"),
+        choices=DECISION_MODES,
         default="legacy",
         help="Moteur de decision a utiliser.",
+    )
+    parser.add_argument(
+        "--hero-position",
+        choices=HERO_POSITIONS,
+        default=DEFAULT_HERO_POSITION,
+        help="Position preflop hero utilisee par les ranges.",
     )
     args = parser.parse_args(raw_argv)
     args.decision_mode_explicit = any(
         arg == "--decision-mode" or arg.startswith("--decision-mode=")
+        for arg in raw_argv
+    )
+    args.hero_position_explicit = any(
+        arg == "--hero-position" or arg.startswith("--hero-position=")
         for arg in raw_argv
     )
     return args
@@ -1609,6 +1652,22 @@ def _normalise_decision_mode(value: object) -> str:
     return mode if mode in DECISION_MODES else "legacy"
 
 
+def select_initial_hero_position(
+    cli_position: Optional[str],
+    interface_state: dict,
+    *,
+    cli_explicit: bool = False,
+) -> str:
+    if cli_explicit:
+        return _normalise_hero_position(cli_position)
+    return _normalise_hero_position(interface_state.get("hero_position") or cli_position)
+
+
+def _normalise_hero_position(value: object) -> str:
+    position = str(value or "").strip().upper()
+    return position if position in HERO_POSITIONS else DEFAULT_HERO_POSITION
+
+
 def main(argv=None) -> None:
     args = parse_args(argv)
     if args.list_games:
@@ -1623,20 +1682,27 @@ def main(argv=None) -> None:
         interface_state,
         cli_explicit=args.decision_mode_explicit,
     )
+    initial_hero_position = select_initial_hero_position(
+        args.hero_position,
+        interface_state,
+        cli_explicit=args.hero_position_explicit,
+    )
 
     configure_logging()
     with session_log("interface") as log_file:
         logger.info(
-            "debut interface interval_ms=%s game=%s decision_mode=%s log=%s",
+            "debut interface interval_ms=%s game=%s decision_mode=%s hero_position=%s log=%s",
             args.interval,
             initial_game,
             initial_decision_mode,
+            initial_hero_position,
             log_path_value(log_file),
         )
         controller = Controller(
             game_name=initial_game,
             coord_path=CONFIG_ROOT / initial_game / "coordinates.json",
             decision_mode=initial_decision_mode,
+            hero_position=initial_hero_position,
         )
         if args.snapshot:
             try:

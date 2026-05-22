@@ -4,6 +4,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Optional
 
+import pytest
+
 from objet.entities.buttons import Button, Buttons
 from objet.entities.card import Card, CardsState
 from objet.services.decision import Decision, DecisionConfig
@@ -435,6 +437,82 @@ def test_default_decision_config_keeps_legacy_mode() -> None:
 
     assert decision.config == DecisionConfig()
     assert decision.config.mode == "legacy"
+
+
+def test_range_analyzer_is_not_a_standalone_decision_mode() -> None:
+    with pytest.raises(ValueError):
+        Decision(mode="range_analyzer")  # type: ignore[arg-type]
+
+
+def test_legacy_uses_range_preflop_when_equity_is_not_ready() -> None:
+    buttons = Buttons(
+        button=[
+            Button(enabled=True, etat="check", value=0.0),
+            Button(enabled=True, etat="mise", value=40.0),
+        ]
+    )
+    game = DummyGame(_cards_state_with_board("7S", "6S", []), buttons=buttons, street="PREFLOP", pot_amount=120.0)
+    game.range_position = "BTN"
+    decision = Decision()
+
+    result = decision.decide(game)
+
+    assert result.action == "RAISE"
+    assert result.reason == "range_analyzer_preflop_open"
+
+
+def test_legacy_can_fold_clear_preflop_out_of_range_before_equity_is_ready() -> None:
+    buttons = Buttons(
+        button=[
+            Button(enabled=True, etat="paie", value=20.0),
+            Button(enabled=True, etat="fold", value=0.0),
+        ]
+    )
+    game = DummyGame(_cards_state_with_board("7S", "2D", []), buttons=buttons, street="PREFLOP", pot_amount=120.0)
+    game.range_position = "UTG"
+    decision = Decision()
+
+    result = decision.decide(game)
+
+    assert result.action == "FOLD"
+    assert result.reason == "range_analyzer_preflop_out_of_range"
+
+
+def test_legacy_raises_premium_preflop_even_when_multiway_equity_is_below_paid_raise_threshold() -> None:
+    buttons = Buttons(
+        button=[
+            Button(enabled=True, etat="relance", value=830.0),
+            Button(enabled=True, etat="paie", value=10.0),
+            Button(enabled=True, etat="fold", value=0.0),
+        ]
+    )
+    game = DummyGame(_cards_state_with_board("AS", "AD", []), buttons=buttons, street="PREFLOP", pot_amount=90.0)
+    game.etat.Call_max = 110.0
+    game.etat.chance_win = 0.55
+    game.etat.equity_required = 0.10
+    game.range_position = "BTN"
+    decision = Decision()
+
+    result = decision.decide(game)
+
+    assert result.action == "RAISE"
+    assert result.reason == "range_analyzer_preflop_value_raise"
+    assert result.raise_amount == 40.0
+
+
+def test_legacy_still_waits_for_equity_after_preflop() -> None:
+    game = DummyGame(
+        _cards_state_with_board("AS", "KS", [("A", "hearts"), ("7", "clubs"), ("2", "spades")]),
+        buttons=DummyButtons(min_value=20.0),
+        street="FLOP",
+        pot_amount=160.0,
+    )
+    decision = Decision()
+
+    result = decision.decide(game)
+
+    assert result.action == "WAIT"
+    assert result.reason == "equity_not_ready"
 
 
 def test_pokermaster_mode_folds_paid_river_with_only_medium_equity() -> None:

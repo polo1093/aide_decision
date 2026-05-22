@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from objet.entities.buttons import Button, Buttons
 from objet.services.controller import Controller, ControllerViewState, button_target_for_action
 
 
@@ -98,6 +99,57 @@ def test_controller_passes_pokermaster_decision_mode() -> None:
     )
 
     assert controller.decision.config.mode == "pokermaster"
+
+
+def test_controller_sets_hero_position_on_game() -> None:
+    controller = Controller(
+        hero_position="CO",
+        telemetry_enabled=False,
+        player_history_enabled=False,
+    )
+
+    assert controller.hero_position == "CO"
+    assert controller.game.range_position == "CO"
+    assert controller.game.etat.range_position == "CO"
+
+    controller.set_hero_position("SB")
+
+    assert controller.hero_position == "SB"
+    assert controller.game.range_position == "SB"
+    assert controller.game.etat.range_position == "SB"
+
+
+def test_controller_auto_detects_hero_position_before_decision() -> None:
+    controller = Controller(
+        hero_position="BTN",
+        telemetry_enabled=False,
+        player_history_enabled=False,
+    )
+    controller.game.street = "PREFLOP"
+    controller.game.table.buttons = Buttons(button=[Button(enabled=True, etat="check", value=0.0)])
+
+    controller.detect_hero_position()
+
+    assert controller.hero_position == "BB"
+    assert controller.game.range_position == "BB"
+    assert controller.game.etat.range_position == "BB"
+    assert controller.hero_position_reason == "preflop_free_option"
+
+
+def test_controller_can_disable_auto_position_detection() -> None:
+    controller = Controller(
+        hero_position="CO",
+        auto_hero_position=False,
+        telemetry_enabled=False,
+        player_history_enabled=False,
+    )
+    controller.game.street = "PREFLOP"
+    controller.game.table.buttons = Buttons(button=[Button(enabled=True, etat="check", value=0.0)])
+
+    controller.detect_hero_position()
+
+    assert controller.hero_position == "CO"
+    assert controller.game.range_position == "CO"
 
 
 def _button(state: str, *, enabled: bool, bbox, text: str = "", value: float = 0.0):

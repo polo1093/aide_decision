@@ -6,9 +6,11 @@ from typing import Literal, Optional
 
 from objet.services.game import Game
 from objet.services.equity import starting_hand_strength
+from objet.services.range_analyzer import RangeAction, classify_hole_cards, get_hand_action, normalize_position
 from objet.utils.logging_config import get_logger
 
 ActionType = Literal["WAIT", "FOLD", "CALL", "CHECK", "RAISE"]
+DecisionMode = Literal["legacy", "pokermaster"]
 LOGGER = get_logger(__name__)
 
 
@@ -25,7 +27,7 @@ class DecisionResult:
 class DecisionConfig:
     """Runtime configuration for the decision engine."""
 
-    mode: Literal["legacy", "pokermaster"] = "legacy"
+    mode: DecisionMode = "legacy"
 
 
 class Decision:
@@ -81,12 +83,15 @@ class Decision:
         "TURN": 0.60,
         "RIVER": 0.72,
     }
+    RANGE_ANALYZER_DEFAULT_POSITION = "BTN"
+    RANGE_ANALYZER_PREFLOP_OPEN_FREQUENCY: int = 50
+    RANGE_ANALYZER_PREFLOP_STRONG_RAISE_FREQUENCY: int = 75
 
     def __init__(
         self,
         config: Optional[DecisionConfig] = None,
         *,
-        mode: Optional[Literal["legacy", "pokermaster"]] = None,
+        mode: Optional[DecisionMode] = None,
     ) -> None:
         if config is not None and mode is not None:
             raise ValueError("Use either config or mode, not both.")
@@ -114,6 +119,30 @@ class Decision:
         equity = getattr(game.etat, "chance_win", None)
         equity_required = getattr(game.etat, "equity_required", None)
         call_max = getattr(game.etat, "Call_max", 0.0)
+        if self.config.mode == "legacy" and _game_street(game) == "PREFLOP":
+            range_fallback = self._decide_range_analyzer_preflop_without_equity(
+                game,
+                buttons=buttons,
+                free_action=free_action,
+                aggressive_action=aggressive_action,
+                to_call=to_call,
+            )
+            if range_fallback is not None and (
+                equity is None
+                or (to_call > 0 and equity_required is None)
+                or (
+                    range_fallback.action == "RAISE"
+                    and (
+                        to_call <= 0
+                        or (
+                            call_max >= to_call
+                            and equity_required is not None
+                            and (equity - equity_required) >= self.FOLD_EDGE
+                        )
+                    )
+                )
+            ):
+                return _log_decision(range_fallback)
         if equity is None:
             return _log_decision(DecisionResult(action="WAIT", reason="equity_not_ready"))
 
@@ -192,6 +221,47 @@ class Decision:
             )
         
         return _log_decision(DecisionResult(action="CALL", reason="call_profitable_or_close"))
+
+    def _decide_range_analyzer_preflop_without_equity(
+        self,
+        game: Game,
+        *,
+        buttons,
+        free_action: bool,
+        aggressive_action: bool,
+        to_call: float,
+    ) -> Optional[DecisionResult]:
+        range_action = self._hero_range_action(game)
+        if range_action is None:
+            return None
+
+        if to_call <= 0:
+            if aggressive_action and range_action.raise_frequency >= self.RANGE_ANALYZER_PREFLOP_OPEN_FREQUENCY:
+                return DecisionResult(
+                    action="RAISE",
+                    reason="range_analyzer_preflop_open",
+                    raise_amount=_recommended_raise_amount(game, buttons),
+                )
+            if free_action:
+                return DecisionResult(action="CHECK", reason="range_analyzer_preflop_check")
+            if _has_explicit_active_buttons(buttons):
+                return DecisionResult(action="WAIT", reason="call_amount_not_detected")
+            return DecisionResult(action="CHECK", reason="range_analyzer_preflop_check")
+
+        if range_action.playable_frequency <= 0:
+            return DecisionResult(action="FOLD", reason="range_analyzer_preflop_out_of_range")
+
+        if (
+            aggressive_action
+            and range_action.raise_frequency >= self.RANGE_ANALYZER_PREFLOP_STRONG_RAISE_FREQUENCY
+        ):
+            return DecisionResult(
+                action="RAISE",
+                reason="range_analyzer_preflop_value_raise",
+                raise_amount=_recommended_raise_amount(game, buttons),
+            )
+
+        return DecisionResult(action="CALL", reason="range_analyzer_preflop_continue")
 
     def _decide_pokermaster_free_action(
         self,
@@ -395,6 +465,16 @@ class Decision:
         strength = starting_hand_strength(hero_cards)
         return 0.0 if strength is None else strength
 
+    def _hero_range_action(self, game: Game) -> Optional[RangeAction]:
+        cards = getattr(game.etat, "cards", None)
+        if cards is None:
+            return None
+        hero_cards = [getattr(card, "poker_card", None) for card in cards.me_cards()]
+        hand = classify_hole_cards(hero_cards)
+        if hand is None:
+            return None
+        return get_hand_action(_range_analyzer_position(game), hand)
+
 
 def _log_decision(result: DecisionResult) -> DecisionResult:
     LOGGER.info("DECISION action=%s reason=%s raise=%s", result.action, result.reason, result.raise_amount)
@@ -427,6 +507,17 @@ def _has_explicit_active_buttons(buttons) -> bool:
 
 def _game_street(game: Game) -> str:
     return str(getattr(game, "street", "") or "").upper()
+
+
+def _range_analyzer_position(game: Game) -> str:
+    for source in (game, getattr(game, "etat", None), getattr(game, "table", None)):
+        if source is None:
+            continue
+        for attr in ("range_position", "hero_position", "position"):
+            position = normalize_position(getattr(source, attr, None))
+            if position is not None:
+                return position
+    return Decision.RANGE_ANALYZER_DEFAULT_POSITION
 
 
 def _recommended_raise_amount(game: Game, buttons) -> Optional[float]:
