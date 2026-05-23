@@ -483,6 +483,26 @@ def test_legacy_falls_back_to_range_preflop_when_pokercharts_context_is_missing(
     assert result.reason == "range_analyzer_preflop_out_of_range"
 
 
+def test_legacy_does_not_fold_aq_small_blind_limped_pot_on_noisy_equity() -> None:
+    buttons = Buttons(
+        button=[
+            Button(enabled=True, etat="paie", value=10.0),
+            Button(enabled=True, etat="fold", value=0.0),
+        ]
+    )
+    game = DummyGame(_cards_state_with_board("AS", "QH", []), buttons=buttons, street="PREFLOP", pot_amount=90.0)
+    game.range_position = "SB"
+    game.etat.Call_max = 0.0
+    game.etat.chance_win = 0.01
+    game.etat.equity_required = 0.50
+    decision = Decision()
+
+    result = decision.decide(game)
+
+    assert result.action == "CALL"
+    assert result.reason == "range_analyzer_preflop_continue"
+
+
 def test_legacy_raises_premium_preflop_even_when_multiway_equity_is_below_paid_raise_threshold() -> None:
     buttons = Buttons(
         button=[

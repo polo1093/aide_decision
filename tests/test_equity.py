@@ -64,6 +64,27 @@ def test_tight_aggressive_range_reduces_weak_hero_equity() -> None:
     assert equity_vs_tight < equity_vs_loose
 
 
+def test_explicit_pokerstove_range_changes_opponent_sampling() -> None:
+    hero = _cards(("A", "hearts"), ("K", "diamonds"))
+    weak_range = OpponentProfile(name="weak", range_string="72o", action="play")
+    strong_range = OpponentProfile(name="strong", range_string="QQ+", action="play")
+
+    equity_vs_weak = weighted_monte_carlo_equity(
+        hero_cards=hero,
+        board_cards=[],
+        opponent_profiles=[weak_range],
+        simulations=1000,
+    )
+    equity_vs_strong = weighted_monte_carlo_equity(
+        hero_cards=hero,
+        board_cards=[],
+        opponent_profiles=[strong_range],
+        simulations=1000,
+    )
+
+    assert equity_vs_weak > equity_vs_strong
+
+
 def test_starting_hand_strength_uses_pokermaster_preflop_ranking() -> None:
     aces = starting_hand_strength(_cards(("A", "hearts"), ("A", "diamonds")))
     seven_deuce = starting_hand_strength(_cards(("7", "hearts"), ("2", "diamonds")))

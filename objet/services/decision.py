@@ -93,6 +93,8 @@ class Decision:
     RANGE_ANALYZER_DEFAULT_POSITION = "BTN"
     RANGE_ANALYZER_PREFLOP_OPEN_FREQUENCY: int = 50
     RANGE_ANALYZER_PREFLOP_STRONG_RAISE_FREQUENCY: int = 75
+    PREFLOP_RANGE_MAX_CHEAP_CALL_POT_RATIO: float = 0.40
+    PREFLOP_RANGE_MIN_CHEAP_CALL_ABSOLUTE: float = 20.0
     PREFLOP_SUSPICIOUS_CALL_POT_RATIO: float = 4.0
 
     def __init__(
@@ -148,6 +150,11 @@ class Decision:
             if range_fallback is not None and (
                 equity is None
                 or (to_call > 0 and equity_required is None)
+                or self._should_trust_cheap_preflop_range_action(
+                    game,
+                    range_fallback=range_fallback,
+                    to_call=to_call,
+                )
                 or (
                     range_fallback.action == "RAISE"
                     and (
@@ -283,6 +290,27 @@ class Decision:
             )
 
         return DecisionResult(action="CALL", reason="range_analyzer_preflop_continue")
+
+    def _should_trust_cheap_preflop_range_action(
+        self,
+        game: Game,
+        *,
+        range_fallback: DecisionResult,
+        to_call: float,
+    ) -> bool:
+        if _game_street(game) != "PREFLOP" or to_call <= 0:
+            return False
+        if range_fallback.action not in {"CALL", "RAISE"}:
+            return False
+
+        pot = _as_positive_float(getattr(game.etat, "pot", None))
+        if pot is None:
+            return False
+        cheap_call_cap = max(
+            self.PREFLOP_RANGE_MIN_CHEAP_CALL_ABSOLUTE,
+            pot * self.PREFLOP_RANGE_MAX_CHEAP_CALL_POT_RATIO,
+        )
+        return to_call <= cheap_call_cap
 
     def _decide_pokercharts_preflop(
         self,

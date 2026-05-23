@@ -17,6 +17,12 @@ from typing import Iterable, Optional, Sequence
 from pokereval.card import Card as PokerEvalCard
 from pokereval.hand_evaluator import HandEvaluator
 
+from objet.services.pokerstove_ranges import (
+    RangeStringError,
+    cached_string_to_combos,
+    combo_key as pokerstove_combo_key,
+)
+
 
 CardKey = tuple[int, int]
 Combo = tuple[PokerEvalCard, PokerEvalCard]
@@ -37,6 +43,21 @@ RANK_TO_PREFLOP_NOTATION = {
     13: "K",
     14: "A",
 }
+UNKNOWN_PLAYER_RANGE = (
+    "22+, A2s+, K8s+, Q9s+, J9s+, T8s+, 98s, 87s, 76s, 65s, "
+    "A9o+, KTo+, QJo, JTo"
+)
+LOOSE_PLAYER_RANGE = (
+    "22+, A2s+, K2s+, Q5s+, J7s+, T7s+, 96s+, 85s+, 75s+, 64s+, 54s, "
+    "A2o+, K8o+, Q9o+, J9o+, T9o, 98o, 87o"
+)
+TIGHT_PLAYER_RANGE = "55+, A8s+, KTs+, QTs+, JTs, T9s, ATo+, KQo"
+CALLING_RANGE = (
+    "22-QQ, A2s-AQs, K9s+, QTs+, JTs, T9s, 98s, 87s, 76s, "
+    "ATo-AQo, KJo+, QJo"
+)
+RAISING_RANGE = "77+, ATs+, KQs, AJo+, KQo, 50%(A5s-A2s, KJs, QJs, T9s)"
+STRONG_RAISING_RANGE = "TT+, AQs+, AKo, 50%(99, AJs, AQo, KQs)"
 
 
 @dataclass(frozen=True)
@@ -53,6 +74,7 @@ class OpponentProfile:
     aggression: float = 0.35
     action: str = "play"
     confidence: float = 0.0
+    range_string: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -205,6 +227,51 @@ def weighted_monte_carlo_equity(
 
 
 def _weighted_combo_range_for_profile(deck: Sequence[PokerEvalCard], profile: OpponentProfile) -> WeightedComboRange:
+    range_string = _profile_range_string(profile)
+    if range_string:
+        parsed = _weighted_combo_range_from_pokerstove_string(deck, profile, range_string)
+        if parsed is not None:
+            return parsed
+
+    return _weighted_combo_range_from_full_deck(deck, profile)
+
+
+def _weighted_combo_range_from_pokerstove_string(
+    deck: Sequence[PokerEvalCard],
+    profile: OpponentProfile,
+    range_string: str,
+) -> Optional[WeightedComboRange]:
+    available_keys = {_card_key(card) for card in deck}
+    combos: list[WeightedCombo] = []
+    cumulative: list[float] = []
+    total = 0.0
+    collapsed: dict[tuple[tuple[int, int], tuple[int, int]], tuple[Combo, float]] = {}
+
+    try:
+        parsed_combos = cached_string_to_combos(range_string)
+    except RangeStringError:
+        return None
+
+    for parsed in parsed_combos:
+        left, right = parsed.cards
+        if _card_key(left) not in available_keys or _card_key(right) not in available_keys:
+            continue
+        key = pokerstove_combo_key(parsed.cards)
+        current_cards, current_weight = collapsed.get(key, (parsed.cards, 0.0))
+        collapsed[key] = (current_cards, current_weight + parsed.weight)
+
+    for combo, range_weight in collapsed.values():
+        weight = max(0.000001, float(range_weight) * _combo_weight(combo, profile))
+        combos.append(WeightedCombo(combo, weight))
+        total += weight
+        cumulative.append(total)
+
+    if not combos or total <= 0:
+        return None
+    return WeightedComboRange(tuple(combos), tuple(cumulative), total)
+
+
+def _weighted_combo_range_from_full_deck(deck: Sequence[PokerEvalCard], profile: OpponentProfile) -> WeightedComboRange:
     combos: list[WeightedCombo] = []
     cumulative: list[float] = []
     total = 0.0
@@ -216,6 +283,24 @@ def _weighted_combo_range_for_profile(deck: Sequence[PokerEvalCard], profile: Op
             total += weighted.weight
             cumulative.append(total)
     return WeightedComboRange(tuple(combos), tuple(cumulative), total)
+
+
+def _profile_range_string(profile: OpponentProfile) -> Optional[str]:
+    if profile.range_string:
+        return profile.range_string
+
+    action = str(profile.action or "play").lower()
+    looseness = _clamp01(profile.looseness)
+
+    if action in {"raise", "relance", "mise", "all-in"}:
+        return STRONG_RAISING_RANGE if looseness <= 0.30 else RAISING_RANGE
+    if action in {"paid", "call", "paie"}:
+        return CALLING_RANGE
+    if looseness >= 0.72:
+        return LOOSE_PLAYER_RANGE
+    if looseness <= 0.35:
+        return TIGHT_PLAYER_RANGE
+    return UNKNOWN_PLAYER_RANGE
 
 
 def _choose_available_combo(
