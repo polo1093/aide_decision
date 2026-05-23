@@ -444,6 +444,12 @@ def test_range_analyzer_is_not_a_standalone_decision_mode() -> None:
         Decision(mode="range_analyzer")  # type: ignore[arg-type]
 
 
+def test_pokercharts_is_an_optional_decision_mode() -> None:
+    decision = Decision(mode="pokercharts")
+
+    assert decision.config.mode == "pokercharts"
+
+
 def test_legacy_uses_range_preflop_when_equity_is_not_ready() -> None:
     buttons = Buttons(
         button=[
@@ -529,6 +535,71 @@ def test_legacy_still_waits_for_equity_after_preflop() -> None:
         pot_amount=160.0,
     )
     decision = Decision()
+
+    result = decision.decide(game)
+
+    assert result.action == "WAIT"
+    assert result.reason == "equity_not_ready"
+
+
+def test_pokercharts_rfi_raises_known_button_hand_without_equity() -> None:
+    buttons = Buttons(
+        button=[
+            Button(enabled=True, etat="check", value=0.0),
+            Button(enabled=True, etat="mise", value=40.0),
+        ]
+    )
+    game = DummyGame(_cards_state_with_board("7S", "6S", []), buttons=buttons, street="PREFLOP", pot_amount=120.0)
+    game.range_position = "BTN"
+    decision = Decision(mode="pokercharts")
+
+    result = decision.decide(game)
+
+    assert result.action == "RAISE"
+    assert result.reason == "pokercharts_preflop_open"
+
+
+def test_pokercharts_paid_spot_folds_hand_outside_chart_range() -> None:
+    buttons = Buttons(
+        button=[
+            Button(enabled=True, etat="paie", value=20.0),
+            Button(enabled=True, etat="fold", value=0.0),
+        ]
+    )
+    game = DummyGame(_cards_state_with_board("7S", "2D", []), buttons=buttons, street="PREFLOP", pot_amount=120.0)
+    game.range_position = "BTN"
+    game.preflop_scenario = "vs-open"
+    game.villain_position = "UTG"
+    decision = Decision(mode="pokercharts")
+
+    result = decision.decide(game)
+
+    assert result.action == "FOLD"
+    assert result.reason == "pokercharts_preflop_fold"
+
+
+def test_pokercharts_missing_paid_context_falls_back_to_legacy() -> None:
+    buttons = Buttons(button=[Button(enabled=True, etat="paie", value=20.0)])
+    game = DummyGame(_cards_state("AS", "KS"), buttons=buttons, street="PREFLOP", pot_amount=120.0)
+    game.etat.Call_max = 100.0
+    game.etat.chance_win = 0.50
+    game.etat.equity_required = 0.35
+    decision = Decision(mode="pokercharts")
+
+    result = decision.decide(game)
+
+    assert result.action == "CALL"
+    assert result.reason == "call_profitable_or_close"
+
+
+def test_pokercharts_postflop_falls_back_to_legacy() -> None:
+    game = DummyGame(
+        _cards_state_with_board("AS", "KS", [("A", "hearts"), ("7", "clubs"), ("2", "spades")]),
+        buttons=DummyButtons(min_value=20.0),
+        street="FLOP",
+        pot_amount=160.0,
+    )
+    decision = Decision(mode="pokercharts")
 
     result = decision.decide(game)
 

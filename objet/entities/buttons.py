@@ -151,9 +151,9 @@ def float_in_str(texte: str, *, state: str = "") -> float:
     token = matches[-1].strip()
     has_currency_symbol = any(symbol in texte for symbol in ("$", "€", "£", "â‚¬", "Â£"))
     if (
-        state.lower() == "paie"
+        state.lower() in {"paie", "relance", "mise"}
         and not has_currency_symbol
-        and re.fullmatch(r"[458]\d{2}", token)
+        and re.fullmatch(r"[458]\d{2,3}", token)
         and not re.fullmatch(r"[0]+", token[1:])
     ):
         token = token[1:]

@@ -101,6 +101,16 @@ def test_controller_passes_pokermaster_decision_mode() -> None:
     assert controller.decision.config.mode == "pokermaster"
 
 
+def test_controller_passes_pokercharts_decision_mode() -> None:
+    controller = Controller(
+        decision_mode="pokercharts",
+        telemetry_enabled=False,
+        player_history_enabled=False,
+    )
+
+    assert controller.decision.config.mode == "pokercharts"
+
+
 def test_controller_sets_hero_position_on_game() -> None:
     controller = Controller(
         hero_position="CO",

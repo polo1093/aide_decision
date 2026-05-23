@@ -124,6 +124,26 @@ def test_apply_scan_fixes_dollar_read_as_four_for_call_button() -> None:
     assert button.value == 10.0
 
 
+def test_apply_scan_fixes_dollar_read_as_four_for_three_digit_call_button() -> None:
+    button = Button()
+
+    button.apply_scan("call 4200")
+
+    assert button.is_activate() is True
+    assert button.etat == "paie"
+    assert button.value == 200.0
+
+
+def test_apply_scan_fixes_dollar_read_as_four_for_three_digit_raise_button() -> None:
+    button = Button()
+
+    button.apply_scan("raise 4360")
+
+    assert button.is_activate() is True
+    assert button.etat == "relance"
+    assert button.value == 360.0
+
+
 def test_apply_scan_fixes_dollar_read_as_eight_for_call_button() -> None:
     button = Button()
 

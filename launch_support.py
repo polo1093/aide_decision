@@ -416,6 +416,11 @@ def _decision_explanation(action: str, reason: str) -> str:
         "range_analyzer_preflop_out_of_range": "Range Analyzer: main hors range preflop, fold propose.",
         "range_analyzer_preflop_value_raise": "Range Analyzer: main forte preflop, relance proposee.",
         "range_analyzer_preflop_continue": "Range Analyzer: main defendable preflop, call propose.",
+        "pokercharts_preflop_open": "Poker Charts: main dans la range RFI, relance proposee.",
+        "pokercharts_preflop_check": "Poker Charts: option gratuite preflop, pas de relance forcee.",
+        "pokercharts_preflop_fold": "Poker Charts: main hors range de continuation, fold propose.",
+        "pokercharts_preflop_aggressive": "Poker Charts: frequence agressive elevee, relance proposee.",
+        "pokercharts_preflop_continue": "Poker Charts: main defendable dans le scenario preflop, call propose.",
         "preflop_premium_call_amount_suspicious": "Main premium preflop avec montant a payer suspect: attente au lieu de fold.",
     }
     detail = explanations.get(reason, reason)

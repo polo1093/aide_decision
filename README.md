@@ -17,6 +17,12 @@ Elle combine :
 - calcul d'équité via simulation Monte Carlo ;
 - décision basée sur l'équité, le coût à payer et les boutons disponibles.
 
+Le mode optionnel `pokercharts` intègre des ranges préflop statiques portées
+depuis `AHTOOOXA/poker-charts` (licence MIT). Seules les données de charts
+locales sont reprises: les leaderboards, scripts de scraping, données joueurs
+et assets d'interface ne sont pas intégrés. Ces charts doivent rester un outil
+d'étude hors table et leur usage doit respecter les règles de la plateforme.
+
 ## Philosophie
 
 Le code doit rester lisible et explicite. Les erreurs de configuration ou de programmation doivent rester visibles.
@@ -54,6 +60,12 @@ Lancer l'interface :
 
 ```powershell
 .\.venv\Scripts\python.exe launch.py --game PMU --interval 1000
+```
+
+Choisir un moteur de décision optionnel :
+
+```powershell
+.\.venv\Scripts\python.exe launch.py --game PMU --decision-mode pokercharts
 ```
 
 Faire un seul scan depuis le terminal :

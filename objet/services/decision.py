@@ -6,11 +6,18 @@ from typing import Literal, Optional
 
 from objet.services.game import Game
 from objet.services.equity import starting_hand_strength
+from objet.services.poker_charts import (
+    DEFAULT_PROVIDER as POKER_CHARTS_DEFAULT_PROVIDER,
+    PokerChartAction,
+    get_cards_action as get_poker_charts_cards_action,
+    normalize_provider as normalize_poker_charts_provider,
+    normalize_scenario as normalize_poker_charts_scenario,
+)
 from objet.services.range_analyzer import RangeAction, classify_hole_cards, get_hand_action, normalize_position
 from objet.utils.logging_config import get_logger
 
 ActionType = Literal["WAIT", "FOLD", "CALL", "CHECK", "RAISE"]
-DecisionMode = Literal["legacy", "pokermaster"]
+DecisionMode = Literal["legacy", "pokermaster", "pokercharts"]
 LOGGER = get_logger(__name__)
 
 
@@ -98,7 +105,7 @@ class Decision:
             raise ValueError("Use either config or mode, not both.")
         if config is None:
             config = DecisionConfig(mode=mode or "legacy")
-        if config.mode not in ("legacy", "pokermaster"):
+        if config.mode not in ("legacy", "pokermaster", "pokercharts"):
             raise ValueError(f"Mode de decision inconnu: {config.mode!r}")
         self.config = config
 
@@ -120,6 +127,20 @@ class Decision:
         equity = getattr(game.etat, "chance_win", None)
         equity_required = getattr(game.etat, "equity_required", None)
         call_max = getattr(game.etat, "Call_max", 0.0)
+        if self.config.mode == "pokercharts":
+            if _game_street(game) != "PREFLOP":
+                return _legacy_decision(game)
+            pokercharts_result = self._decide_pokercharts_preflop(
+                game,
+                buttons=buttons,
+                free_action=free_action,
+                aggressive_action=aggressive_action,
+                to_call=to_call,
+            )
+            if pokercharts_result is not None:
+                return _log_decision(pokercharts_result)
+            return _legacy_decision(game)
+
         if self.config.mode == "legacy" and _game_street(game) == "PREFLOP":
             range_fallback = self._decide_range_analyzer_preflop_without_equity(
                 game,
@@ -266,6 +287,42 @@ class Decision:
             )
 
         return DecisionResult(action="CALL", reason="range_analyzer_preflop_continue")
+
+    def _decide_pokercharts_preflop(
+        self,
+        game: Game,
+        *,
+        buttons,
+        free_action: bool,
+        aggressive_action: bool,
+        to_call: float,
+    ) -> Optional[DecisionResult]:
+        chart_action = self._hero_pokercharts_action(game, to_call=to_call)
+        if chart_action is None:
+            return None
+
+        if to_call <= 0:
+            if aggressive_action and chart_action.aggressive_frequency >= 50:
+                return DecisionResult(
+                    action="RAISE",
+                    reason="pokercharts_preflop_open",
+                    raise_amount=_recommended_raise_amount(game, buttons),
+                )
+            if free_action:
+                return DecisionResult(action="CHECK", reason="pokercharts_preflop_check")
+            return DecisionResult(action="WAIT", reason="call_amount_not_detected")
+
+        if chart_action.continue_frequency < 50:
+            return DecisionResult(action="FOLD", reason="pokercharts_preflop_fold")
+
+        if aggressive_action and chart_action.aggressive_frequency >= 75:
+            return DecisionResult(
+                action="RAISE",
+                reason="pokercharts_preflop_aggressive",
+                raise_amount=_recommended_raise_amount(game, buttons),
+            )
+
+        return DecisionResult(action="CALL", reason="pokercharts_preflop_continue")
 
     def _decide_pokermaster_free_action(
         self,
@@ -479,6 +536,22 @@ class Decision:
             return None
         return get_hand_action(_range_analyzer_position(game), hand)
 
+    def _hero_pokercharts_action(self, game: Game, *, to_call: float) -> Optional[PokerChartAction]:
+        cards = getattr(game.etat, "cards", None)
+        if cards is None:
+            return None
+        hero_cards = [getattr(card, "poker_card", None) for card in cards.me_cards()]
+        scenario = "RFI" if to_call <= 0 else _pokercharts_scenario(game)
+        if scenario is None:
+            return None
+        return get_poker_charts_cards_action(
+            _pokercharts_provider(game),
+            _range_analyzer_position(game),
+            scenario,
+            hero_cards,
+            _pokercharts_villain_position(game),
+        )
+
     def _should_wait_on_suspicious_premium_preflop_call(self, game: Game, *, to_call: float) -> bool:
         if _game_street(game) != "PREFLOP" or to_call <= 0:
             return False
@@ -494,6 +567,10 @@ class Decision:
 def _log_decision(result: DecisionResult) -> DecisionResult:
     LOGGER.info("DECISION action=%s reason=%s raise=%s", result.action, result.reason, result.raise_amount)
     return result
+
+
+def _legacy_decision(game: Game) -> DecisionResult:
+    return Decision(mode="legacy").decide(game)
 
 
 def _free_action_available(buttons) -> bool:
@@ -533,6 +610,39 @@ def _range_analyzer_position(game: Game) -> str:
             if position is not None:
                 return position
     return Decision.RANGE_ANALYZER_DEFAULT_POSITION
+
+
+def _pokercharts_provider(game: Game) -> str:
+    for source in (game, getattr(game, "etat", None), getattr(game, "table", None)):
+        if source is None:
+            continue
+        for attr in ("pokercharts_provider", "poker_charts_provider", "range_provider"):
+            provider = normalize_poker_charts_provider(getattr(source, attr, None))
+            if provider is not None:
+                return provider
+    return POKER_CHARTS_DEFAULT_PROVIDER
+
+
+def _pokercharts_scenario(game: Game) -> Optional[str]:
+    for source in (game, getattr(game, "etat", None), getattr(game, "table", None)):
+        if source is None:
+            continue
+        for attr in ("preflop_scenario", "pokercharts_scenario", "range_scenario"):
+            scenario = normalize_poker_charts_scenario(getattr(source, attr, None))
+            if scenario is not None:
+                return scenario
+    return None
+
+
+def _pokercharts_villain_position(game: Game) -> Optional[str]:
+    for source in (game, getattr(game, "etat", None), getattr(game, "table", None)):
+        if source is None:
+            continue
+        for attr in ("villain_position", "opener_position", "aggressor_position"):
+            position = normalize_position(getattr(source, attr, None))
+            if position is not None:
+                return position
+    return None
 
 
 def _recommended_raise_amount(game: Game, buttons) -> Optional[float]:

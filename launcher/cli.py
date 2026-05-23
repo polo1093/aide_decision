@@ -10,7 +10,7 @@ from launch_support import DEFAULT_SCAN_INTERVAL_MS
 from objet.services.range_analyzer import POSITIONS as HERO_POSITIONS
 
 
-DECISION_MODES = ("legacy", "pokermaster")
+DECISION_MODES = ("legacy", "pokermaster", "pokercharts")
 DEFAULT_HERO_POSITION = "BTN"
 
 

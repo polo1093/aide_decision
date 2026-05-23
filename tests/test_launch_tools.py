@@ -9,6 +9,7 @@ import pytest
 
 from launch import (
     App,
+    CONFIG_ROOT,
     available_game_names,
     build_interface_launch_command,
     build_capture_frames_args,
@@ -43,6 +44,10 @@ def test_available_game_names_lists_profiles_with_coordinates(tmp_path: Path) ->
     assert available_game_names(config_root) == ["PMU"]
 
 
+def test_launch_exports_config_root_used_by_main_and_app_helpers() -> None:
+    assert CONFIG_ROOT.name == "config"
+
+
 def test_available_game_names_falls_back_to_pmu_for_missing_root(tmp_path: Path) -> None:
     assert available_game_names(tmp_path / "missing") == ["PMU"]
 
@@ -52,7 +57,7 @@ def test_interface_state_round_trip(tmp_path: Path) -> None:
     save_interface_state(
         {
             "game_name": "PokerTH",
-            "decision_mode": "pokermaster",
+            "decision_mode": "pokercharts",
             "hero_position": "CO",
             "window_geometry": "1200x800+10+20",
             "window_state": "zoomed",
@@ -62,7 +67,7 @@ def test_interface_state_round_trip(tmp_path: Path) -> None:
 
     assert load_interface_state(path) == {
         "game_name": "PokerTH",
-        "decision_mode": "pokermaster",
+        "decision_mode": "pokercharts",
         "hero_position": "CO",
         "window_geometry": "1200x800+10+20",
         "window_state": "zoomed",
@@ -80,6 +85,7 @@ def test_select_initial_game_uses_cli_then_saved_then_default() -> None:
 def test_select_initial_decision_mode_uses_explicit_cli_then_saved_then_legacy() -> None:
     assert select_initial_decision_mode("legacy", {"decision_mode": "pokermaster"}, cli_explicit=True) == "legacy"
     assert select_initial_decision_mode("legacy", {"decision_mode": "pokermaster"}, cli_explicit=False) == "pokermaster"
+    assert select_initial_decision_mode("legacy", {"decision_mode": "pokercharts"}, cli_explicit=False) == "pokercharts"
     assert select_initial_decision_mode("legacy", {"decision_mode": "missing"}, cli_explicit=False) == "legacy"
 
 
@@ -123,6 +129,13 @@ def test_parse_args_accepts_pokermaster_decision_mode() -> None:
     assert args.decision_mode_explicit is True
 
 
+def test_parse_args_accepts_pokercharts_decision_mode() -> None:
+    args = parse_args(["--decision-mode", "pokercharts"])
+
+    assert args.decision_mode == "pokercharts"
+    assert args.decision_mode_explicit is True
+
+
 def test_parse_args_rejects_range_analyzer_as_decision_mode() -> None:
     with pytest.raises(SystemExit):
         parse_args(["--decision-mode", "range_analyzer"])
@@ -146,15 +159,15 @@ def test_switch_decision_mode_replaces_current_decision_engine() -> None:
     app = App.__new__(App)
     app.game_name = "PMU"
     app.decision_mode = "legacy"
-    app.var_decision_mode = _Var("pokermaster")
+    app.var_decision_mode = _Var("pokercharts")
     app.controller = SimpleNamespace(decision=SimpleNamespace(config=SimpleNamespace(mode="legacy")))
     app.stop_scan = lambda: None
     app._save_interface_state = lambda: None
 
     App._switch_decision_mode(app)
 
-    assert app.decision_mode == "pokermaster"
-    assert app.controller.decision.config.mode == "pokermaster"
+    assert app.decision_mode == "pokercharts"
+    assert app.controller.decision.config.mode == "pokercharts"
 
 
 def test_switch_hero_position_updates_controller() -> None:
@@ -176,7 +189,7 @@ def test_save_interface_state_includes_decision_mode_and_hero_position(monkeypat
     app = App.__new__(App)
     app.var_game = _Var("PokerTH")
     app.game_name = "PMU"
-    app.decision_mode = "pokermaster"
+    app.decision_mode = "pokercharts"
     app.hero_position = "CO"
     app.geometry = lambda: "1200x800+10+20"
     app.state = lambda: "normal"
@@ -188,7 +201,7 @@ def test_save_interface_state_includes_decision_mode_and_hero_position(monkeypat
     assert saved == [
         {
             "game_name": "PokerTH",
-            "decision_mode": "pokermaster",
+            "decision_mode": "pokercharts",
             "hero_position": "CO",
             "window_geometry": "1200x800+10+20",
             "window_state": "normal",

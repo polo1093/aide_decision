@@ -33,6 +33,7 @@ from objet.utils.logging_config import (
 )
 from launch_support import (
     AUTO_IDENTIFY_COOLDOWN_SECONDS,
+    CONFIG_ROOT,
     DEFAULT_GAME_NAME,
     DEFAULT_SCAN_INTERVAL_MS,
     DEFAULT_WINDOW_GEOMETRY,
