@@ -525,6 +525,27 @@ def test_legacy_raises_premium_preflop_even_when_multiway_equity_is_below_paid_r
     assert result.raise_amount == 40.0
 
 
+def test_legacy_range_preflop_does_not_override_expensive_negative_equity() -> None:
+    buttons = Buttons(
+        button=[
+            Button(enabled=True, etat="relance", value=300.0),
+            Button(enabled=True, etat="paie", value=100.0),
+            Button(enabled=True, etat="fold", value=0.0),
+        ]
+    )
+    game = DummyGame(_cards_state_with_board("AS", "AD", []), buttons=buttons, street="PREFLOP", pot_amount=100.0)
+    game.etat.Call_max = 200.0
+    game.etat.chance_win = 0.20
+    game.etat.equity_required = 0.60
+    game.range_position = "BTN"
+    decision = Decision()
+
+    result = decision.decide(game)
+
+    assert result.action == "FOLD"
+    assert result.reason == "negative_call_ev"
+
+
 def test_waits_instead_of_folding_premium_preflop_when_call_amount_is_suspicious() -> None:
     buttons = Buttons(
         button=[

@@ -37,6 +37,19 @@ class DecisionConfig:
     mode: DecisionMode = "legacy"
 
 
+@dataclass(frozen=True)
+class _DecisionContext:
+    """Values derived once from the table state and shared by decision branches."""
+
+    buttons: object
+    free_action: bool
+    aggressive_action: bool
+    to_call: float
+    equity: Optional[float]
+    equity_required: Optional[float]
+    call_max: float
+
+
 class Decision:
     """Simple, fail-fast decision engine for the hero."""
 
@@ -123,132 +136,160 @@ class Decision:
         if buttons is None or not buttons.one_is_activate():
             return _log_decision(DecisionResult(action="WAIT", reason="not_buttons"))
 
-        free_action = _free_action_available(buttons)
-        aggressive_action = _aggressive_action_available(buttons)
-        to_call = 0.0 if free_action else buttons.min_value()
-        equity = getattr(game.etat, "chance_win", None)
-        equity_required = getattr(game.etat, "equity_required", None)
-        call_max = getattr(game.etat, "Call_max", 0.0)
-        if self.config.mode == "legacy" and _game_street(game) == "PREFLOP":
-            pokercharts_result = self._decide_pokercharts_preflop(
-                game,
-                buttons=buttons,
-                free_action=free_action,
-                aggressive_action=aggressive_action,
-                to_call=to_call,
-            )
-            if pokercharts_result is not None:
-                return _log_decision(pokercharts_result)
+        context = _build_decision_context(game, buttons)
+        if self.config.mode == "legacy":
+            legacy_preflop = self._decide_legacy_preflop(game, context=context)
+            if legacy_preflop is not None:
+                return _log_decision(legacy_preflop)
 
-            range_fallback = self._decide_range_analyzer_preflop_without_equity(
-                game,
-                buttons=buttons,
-                free_action=free_action,
-                aggressive_action=aggressive_action,
-                to_call=to_call,
-            )
-            if range_fallback is not None and (
-                equity is None
-                or (to_call > 0 and equity_required is None)
-                or self._should_trust_cheap_preflop_range_action(
-                    game,
-                    range_fallback=range_fallback,
-                    to_call=to_call,
-                )
-                or (
-                    range_fallback.action == "RAISE"
-                    and (
-                        to_call <= 0
-                        or (
-                            call_max >= to_call
-                            and equity_required is not None
-                            and (equity - equity_required) >= self.FOLD_EDGE
-                        )
-                    )
-                )
-            ):
-                return _log_decision(range_fallback)
-        if equity is None:
+        if context.equity is None:
             return _log_decision(DecisionResult(action="WAIT", reason="equity_not_ready"))
 
         # No money to add: never CALL. Check weak/medium hands, raise strong ones.
-        if to_call <= 0:
+        if context.to_call <= 0:
             if self.config.mode == "pokermaster":
                 return self._decide_pokermaster_free_action(
                     game,
-                    buttons=buttons,
-                    equity=equity,
-                    free_action=free_action,
-                    aggressive_action=aggressive_action,
+                    buttons=context.buttons,
+                    equity=context.equity,
+                    free_action=context.free_action,
+                    aggressive_action=context.aggressive_action,
                 )
-            if free_action and aggressive_action and equity >= self._free_raise_equity_threshold(game):
+            if (
+                context.free_action
+                and context.aggressive_action
+                and context.equity >= self._free_raise_equity_threshold(game)
+            ):
                 return _log_decision(
                     DecisionResult(
                         action="RAISE",
                         reason="free_option_strong_equity",
-                        raise_amount=_recommended_raise_amount(game, buttons),
+                        raise_amount=_recommended_raise_amount(game, context.buttons),
                     )
                 )
-            if free_action:
+            if context.free_action:
                 return _log_decision(DecisionResult(action="CHECK", reason="free_option_no_call_needed"))
-            if _has_explicit_active_buttons(buttons):
+            if _has_explicit_active_buttons(context.buttons):
                 return _log_decision(DecisionResult(action="WAIT", reason="call_amount_not_detected"))
             return _log_decision(DecisionResult(action="CHECK", reason="free_option_no_call_needed"))
 
-        if equity_required is None:
+        if context.equity_required is None:
             return _log_decision(DecisionResult(action="WAIT", reason="equity_required_not_ready"))
 
-        edge = equity - equity_required
+        edge = context.equity - context.equity_required
         LOGGER.debug(
             "DECISION contexte equity=%s equity_required=%s edge=%s call_max=%s to_call=%s",
-            equity,
-            equity_required,
+            context.equity,
+            context.equity_required,
             edge,
-            call_max,
-            to_call,
+            context.call_max,
+            context.to_call,
         )
 
-        if self._should_wait_on_suspicious_premium_preflop_call(game, to_call=to_call):
+        if self._should_wait_on_suspicious_premium_preflop_call(game, to_call=context.to_call):
             return _log_decision(DecisionResult(action="WAIT", reason="preflop_premium_call_amount_suspicious"))
 
-        if call_max < to_call or edge < self.FOLD_EDGE:
+        if context.call_max < context.to_call or edge < self.FOLD_EDGE:
             return _log_decision(DecisionResult(action="FOLD", reason="negative_call_ev"))
 
         if self.config.mode == "pokermaster":
             return self._decide_pokermaster_paid_action(
                 game,
-                buttons=buttons,
-                equity=equity,
+                buttons=context.buttons,
+                equity=context.equity,
                 edge=edge,
-                to_call=to_call,
-                aggressive_action=aggressive_action,
+                to_call=context.to_call,
+                aggressive_action=context.aggressive_action,
             )
 
-        if self._should_fold_river_board_only_hand(game, to_call=to_call):
+        if self._should_fold_river_board_only_hand(game, to_call=context.to_call):
             return _log_decision(DecisionResult(action="FOLD", reason="river_board_only_big_bet"))
 
-        if self._should_fold_river_big_bet_with_weak_showdown(game, to_call=to_call):
+        if self._should_fold_river_big_bet_with_weak_showdown(game, to_call=context.to_call):
             return _log_decision(DecisionResult(action="FOLD", reason="river_big_bet_weak_showdown"))
 
-        if self._can_value_raise_paid_pot(game, equity=equity, edge=edge):
+        if self._can_value_raise_paid_pot(game, equity=context.equity, edge=edge):
             return _log_decision(
                 DecisionResult(
                     action="RAISE",
                     reason="positive_edge_raise",
-                    raise_amount=_recommended_raise_amount(game, buttons),
+                    raise_amount=_recommended_raise_amount(game, context.buttons),
                 )
             )
 
-        if self._can_raise_small_bet_for_value(game, equity=equity, edge=edge, to_call=to_call):
+        if self._can_raise_small_bet_for_value(game, equity=context.equity, edge=edge, to_call=context.to_call):
             return _log_decision(
                 DecisionResult(
                     action="RAISE",
                     reason="small_bet_value_protection",
-                    raise_amount=_recommended_raise_amount(game, buttons),
+                    raise_amount=_recommended_raise_amount(game, context.buttons),
                 )
             )
         
         return _log_decision(DecisionResult(action="CALL", reason="call_profitable_or_close"))
+
+    def _decide_legacy_preflop(
+        self,
+        game: Game,
+        *,
+        context: _DecisionContext,
+    ) -> Optional[DecisionResult]:
+        if _game_street(game) != "PREFLOP":
+            return None
+
+        pokercharts_result = self._decide_pokercharts_preflop(
+            game,
+            buttons=context.buttons,
+            free_action=context.free_action,
+            aggressive_action=context.aggressive_action,
+            to_call=context.to_call,
+        )
+        if pokercharts_result is not None:
+            return pokercharts_result
+
+        range_fallback = self._decide_range_analyzer_preflop_without_equity(
+            game,
+            buttons=context.buttons,
+            free_action=context.free_action,
+            aggressive_action=context.aggressive_action,
+            to_call=context.to_call,
+        )
+        if range_fallback is None:
+            return None
+        if self._should_use_legacy_preflop_range_fallback(
+            game,
+            range_fallback=range_fallback,
+            context=context,
+        ):
+            return range_fallback
+        return None
+
+    def _should_use_legacy_preflop_range_fallback(
+        self,
+        game: Game,
+        *,
+        range_fallback: DecisionResult,
+        context: _DecisionContext,
+    ) -> bool:
+        if context.equity is None:
+            return True
+        if context.to_call > 0 and context.equity_required is None:
+            return True
+        if self._should_trust_cheap_preflop_range_action(
+            game,
+            range_fallback=range_fallback,
+            to_call=context.to_call,
+        ):
+            return True
+        if range_fallback.action != "RAISE":
+            return False
+        if context.to_call <= 0:
+            return True
+        return (
+            context.call_max >= context.to_call
+            and context.equity_required is not None
+            and (context.equity - context.equity_required) >= self.FOLD_EDGE
+        )
 
     def _decide_range_analyzer_preflop_without_equity(
         self,
@@ -595,6 +636,19 @@ def _log_decision(result: DecisionResult) -> DecisionResult:
 
 def _legacy_decision(game: Game) -> DecisionResult:
     return Decision(mode="legacy").decide(game)
+
+
+def _build_decision_context(game: Game, buttons) -> _DecisionContext:
+    free_action = _free_action_available(buttons)
+    return _DecisionContext(
+        buttons=buttons,
+        free_action=free_action,
+        aggressive_action=_aggressive_action_available(buttons),
+        to_call=0.0 if free_action else buttons.min_value(),
+        equity=getattr(game.etat, "chance_win", None),
+        equity_required=getattr(game.etat, "equity_required", None),
+        call_max=getattr(game.etat, "Call_max", 0.0),
+    )
 
 
 def _free_action_available(buttons) -> bool:
