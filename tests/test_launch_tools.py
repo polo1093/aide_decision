@@ -85,7 +85,7 @@ def test_select_initial_game_uses_cli_then_saved_then_default() -> None:
 def test_select_initial_decision_mode_uses_explicit_cli_then_saved_then_legacy() -> None:
     assert select_initial_decision_mode("legacy", {"decision_mode": "pokermaster"}, cli_explicit=True) == "legacy"
     assert select_initial_decision_mode("legacy", {"decision_mode": "pokermaster"}, cli_explicit=False) == "pokermaster"
-    assert select_initial_decision_mode("legacy", {"decision_mode": "pokercharts"}, cli_explicit=False) == "pokercharts"
+    assert select_initial_decision_mode("legacy", {"decision_mode": "pokercharts"}, cli_explicit=False) == "legacy"
     assert select_initial_decision_mode("legacy", {"decision_mode": "missing"}, cli_explicit=False) == "legacy"
 
 
@@ -129,11 +129,9 @@ def test_parse_args_accepts_pokermaster_decision_mode() -> None:
     assert args.decision_mode_explicit is True
 
 
-def test_parse_args_accepts_pokercharts_decision_mode() -> None:
-    args = parse_args(["--decision-mode", "pokercharts"])
-
-    assert args.decision_mode == "pokercharts"
-    assert args.decision_mode_explicit is True
+def test_parse_args_rejects_pokercharts_as_standalone_decision_mode() -> None:
+    with pytest.raises(SystemExit):
+        parse_args(["--decision-mode", "pokercharts"])
 
 
 def test_parse_args_rejects_range_analyzer_as_decision_mode() -> None:
@@ -159,15 +157,15 @@ def test_switch_decision_mode_replaces_current_decision_engine() -> None:
     app = App.__new__(App)
     app.game_name = "PMU"
     app.decision_mode = "legacy"
-    app.var_decision_mode = _Var("pokercharts")
+    app.var_decision_mode = _Var("pokermaster")
     app.controller = SimpleNamespace(decision=SimpleNamespace(config=SimpleNamespace(mode="legacy")))
     app.stop_scan = lambda: None
     app._save_interface_state = lambda: None
 
     App._switch_decision_mode(app)
 
-    assert app.decision_mode == "pokercharts"
-    assert app.controller.decision.config.mode == "pokercharts"
+    assert app.decision_mode == "pokermaster"
+    assert app.controller.decision.config.mode == "pokermaster"
 
 
 def test_switch_hero_position_updates_controller() -> None:
@@ -189,7 +187,7 @@ def test_save_interface_state_includes_decision_mode_and_hero_position(monkeypat
     app = App.__new__(App)
     app.var_game = _Var("PokerTH")
     app.game_name = "PMU"
-    app.decision_mode = "pokercharts"
+    app.decision_mode = "pokermaster"
     app.hero_position = "CO"
     app.geometry = lambda: "1200x800+10+20"
     app.state = lambda: "normal"
@@ -201,7 +199,7 @@ def test_save_interface_state_includes_decision_mode_and_hero_position(monkeypat
     assert saved == [
         {
             "game_name": "PokerTH",
-            "decision_mode": "pokercharts",
+            "decision_mode": "pokermaster",
             "hero_position": "CO",
             "window_geometry": "1200x800+10+20",
             "window_state": "normal",

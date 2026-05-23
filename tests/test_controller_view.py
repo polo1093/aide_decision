@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from objet.entities.buttons import Button, Buttons
 from objet.services.controller import Controller, ControllerViewState, button_target_for_action
 
@@ -101,14 +103,13 @@ def test_controller_passes_pokermaster_decision_mode() -> None:
     assert controller.decision.config.mode == "pokermaster"
 
 
-def test_controller_passes_pokercharts_decision_mode() -> None:
-    controller = Controller(
-        decision_mode="pokercharts",
-        telemetry_enabled=False,
-        player_history_enabled=False,
-    )
-
-    assert controller.decision.config.mode == "pokercharts"
+def test_controller_rejects_pokercharts_as_standalone_decision_mode() -> None:
+    with pytest.raises(ValueError):
+        Controller(
+            decision_mode="pokercharts",
+            telemetry_enabled=False,
+            player_history_enabled=False,
+        )
 
 
 def test_controller_sets_hero_position_on_game() -> None:

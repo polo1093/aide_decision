@@ -17,11 +17,14 @@ Elle combine :
 - calcul d'équité via simulation Monte Carlo ;
 - décision basée sur l'équité, le coût à payer et les boutons disponibles.
 
-Le mode optionnel `pokercharts` intègre des ranges préflop statiques portées
-depuis `AHTOOOXA/poker-charts` (licence MIT). Seules les données de charts
-locales sont reprises: les leaderboards, scripts de scraping, données joueurs
-et assets d'interface ne sont pas intégrés. Ces charts doivent rester un outil
-d'étude hors table et leur usage doit respecter les règles de la plateforme.
+Le mode `legacy` intègre aussi des ranges préflop statiques portées depuis
+`AHTOOOXA/poker-charts` (licence MIT). Elles sont utilisées en priorité quand
+le spot préflop est clairement exploitable, puis le moteur retombe sur les
+règles historiques: Range Analyzer préflop, équité Monte Carlo, coût à payer,
+EV et boutons disponibles. Seules les données de charts locales sont reprises:
+les leaderboards, scripts de scraping, données joueurs et assets d'interface ne
+sont pas intégrés. Ces charts doivent rester un outil d'étude hors table et
+leur usage doit respecter les règles de la plateforme.
 
 ## Philosophie
 
@@ -62,11 +65,21 @@ Lancer l'interface :
 .\.venv\Scripts\python.exe launch.py --game PMU --interval 1000
 ```
 
-Choisir un moteur de décision optionnel :
+Choisir le moteur de décision :
 
 ```powershell
-.\.venv\Scripts\python.exe launch.py --game PMU --decision-mode pokercharts
+.\.venv\Scripts\python.exe launch.py --game PMU --decision-mode pokermaster
 ```
+
+Modes disponibles :
+
+- `legacy` : mode par défaut. Il combine les charts préflop intégrés, le
+  fallback Range Analyzer, l'équité, l'EV et les règles de prudence postflop.
+- `pokermaster` : variante plus stricte, surtout sur les gros pots, la river et
+  les situations de pression tournoi / short stack.
+
+L'ancien mode séparé `pokercharts` a été fusionné dans `legacy`; un état
+d'interface sauvegardé avec `pokercharts` est relu comme `legacy`.
 
 Faire un seul scan depuis le terminal :
 

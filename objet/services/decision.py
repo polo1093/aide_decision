@@ -17,7 +17,7 @@ from objet.services.range_analyzer import RangeAction, classify_hole_cards, get_
 from objet.utils.logging_config import get_logger
 
 ActionType = Literal["WAIT", "FOLD", "CALL", "CHECK", "RAISE"]
-DecisionMode = Literal["legacy", "pokermaster", "pokercharts"]
+DecisionMode = Literal["legacy", "pokermaster"]
 LOGGER = get_logger(__name__)
 
 
@@ -105,7 +105,7 @@ class Decision:
             raise ValueError("Use either config or mode, not both.")
         if config is None:
             config = DecisionConfig(mode=mode or "legacy")
-        if config.mode not in ("legacy", "pokermaster", "pokercharts"):
+        if config.mode not in ("legacy", "pokermaster"):
             raise ValueError(f"Mode de decision inconnu: {config.mode!r}")
         self.config = config
 
@@ -127,9 +127,7 @@ class Decision:
         equity = getattr(game.etat, "chance_win", None)
         equity_required = getattr(game.etat, "equity_required", None)
         call_max = getattr(game.etat, "Call_max", 0.0)
-        if self.config.mode == "pokercharts":
-            if _game_street(game) != "PREFLOP":
-                return _legacy_decision(game)
+        if self.config.mode == "legacy" and _game_street(game) == "PREFLOP":
             pokercharts_result = self._decide_pokercharts_preflop(
                 game,
                 buttons=buttons,
@@ -139,9 +137,7 @@ class Decision:
             )
             if pokercharts_result is not None:
                 return _log_decision(pokercharts_result)
-            return _legacy_decision(game)
 
-        if self.config.mode == "legacy" and _game_street(game) == "PREFLOP":
             range_fallback = self._decide_range_analyzer_preflop_without_equity(
                 game,
                 buttons=buttons,

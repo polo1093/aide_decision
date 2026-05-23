@@ -10,7 +10,7 @@ from launch_support import DEFAULT_SCAN_INTERVAL_MS
 from objet.services.range_analyzer import POSITIONS as HERO_POSITIONS
 
 
-DECISION_MODES = ("legacy", "pokermaster", "pokercharts")
+DECISION_MODES = ("legacy", "pokermaster")
 DEFAULT_HERO_POSITION = "BTN"
 
 
@@ -58,6 +58,8 @@ def select_initial_decision_mode(
 
 def _normalise_decision_mode(value: object) -> str:
     mode = str(value or "").strip()
+    if mode == "pokercharts":
+        return "legacy"
     return mode if mode in DECISION_MODES else "legacy"
 
 
