@@ -21,9 +21,12 @@ class TelemetryRecorder:
     game_name: str = "PMU"
     enabled: bool = True
     clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
+    ml_dataset_enabled: bool = False
+    session_id: Optional[str] = None
 
     def __post_init__(self) -> None:
         self.root_dir = Path(self.root_dir)
+        self.session_id = _safe_filename(self.session_id or _session_id_from_datetime(self.clock()))
 
     def record_cycle(self, *, game: Any, view_state: Any) -> Optional[dict[str, Any]]:
         """Sauve le snapshot courant et retourne l'evenement serialise."""
@@ -33,6 +36,16 @@ class TelemetryRecorder:
 
         event = self.build_cycle_event(game=game, view_state=view_state)
         self._append_jsonl(self._hand_path(event["hand_id"]), event)
+        if self.ml_dataset_enabled:
+            try:
+                ml_event = self.build_ml_decision_event(
+                    game=game,
+                    view_state=view_state,
+                    recorded_at=event["recorded_at"],
+                )
+                self._append_jsonl(self._hand_path(event["hand_id"]), ml_event)
+            except Exception:
+                pass
         for player in event["players"]:
             player_event = {
                 "type": "player_snapshot",
@@ -86,6 +99,21 @@ class TelemetryRecorder:
             },
         }
 
+    def build_ml_decision_event(
+        self,
+        *,
+        game: Any,
+        view_state: Any,
+        recorded_at: Optional[str] = None,
+    ) -> dict[str, Any]:
+        from objet.services.ml_dataset import build_ml_decision_snapshot
+
+        return build_ml_decision_snapshot(
+            game=game,
+            view_state=view_state,
+            recorded_at=recorded_at or self._recorded_at(),
+        )
+
     def _recorded_at(self) -> str:
         current = self.clock()
         if current.tzinfo is None:
@@ -94,10 +122,13 @@ class TelemetryRecorder:
 
     def _hand_path(self, hand_id: Any) -> Path:
         hand_name = "unknown" if hand_id is None else str(hand_id)
-        return self.root_dir / self.game_name / "hands" / f"hand_{_safe_filename(hand_name)}.jsonl"
+        return self._session_root() / "hands" / f"hand_{_safe_filename(hand_name)}.jsonl"
 
     def _player_path(self, player_name: str) -> Path:
-        return self.root_dir / self.game_name / "players" / f"{_safe_filename(player_name)}.jsonl"
+        return self._session_root() / "players" / f"{_safe_filename(player_name)}.jsonl"
+
+    def _session_root(self) -> Path:
+        return self.root_dir / self.game_name / "sessions" / str(self.session_id)
 
     @staticmethod
     def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
@@ -156,6 +187,13 @@ def _safe_filename(value: str) -> str:
     ascii_value = normalized.encode("ascii", "ignore").decode("ascii")
     clean = re.sub(r"[^A-Za-z0-9_.-]+", "_", ascii_value).strip("._")
     return clean or "unknown"
+
+
+def _session_id_from_datetime(current: datetime) -> str:
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    current = current.astimezone(timezone.utc)
+    return current.strftime("%Y%m%d_%H%M%S_%f")
 
 
 __all__ = ["TelemetryRecorder", "DEFAULT_TELEMETRY_DIR"]

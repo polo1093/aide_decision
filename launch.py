@@ -74,6 +74,19 @@ from launch_support import (
 logger = get_logger(__name__)
 
 
+def configure_console_output() -> None:
+    """Keep Windows terminals from crashing on card suit symbols."""
+
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if not callable(reconfigure):
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (TypeError, ValueError):
+            continue
+
+
 class App(AppToolsMixin, AppClickMixin, AppScanMixin, tk.Tk):
     def __init__(
         self,
@@ -854,6 +867,7 @@ class App(AppToolsMixin, AppClickMixin, AppScanMixin, tk.Tk):
 
 
 def main(argv=None) -> None:
+    configure_console_output()
     args = parse_args(argv)
     if args.list_games:
         for name in available_game_names():

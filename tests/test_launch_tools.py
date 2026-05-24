@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import queue
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,6 +19,7 @@ from launch import (
     build_validate_cards_args,
     build_zone_editor_args,
     click_target_button_box,
+    configure_console_output,
     enter_raise_amount_for_game,
     format_command,
     load_interface_state,
@@ -33,6 +35,26 @@ from launch import (
     script_path_for,
 )
 from objet.services.controller import ControllerViewState
+
+
+class _ReconfigurableStream:
+    def __init__(self) -> None:
+        self.kwargs = None
+
+    def reconfigure(self, **kwargs) -> None:
+        self.kwargs = kwargs
+
+
+def test_configure_console_output_sets_utf8_with_replacement(monkeypatch: pytest.MonkeyPatch) -> None:
+    stdout = _ReconfigurableStream()
+    stderr = _ReconfigurableStream()
+    monkeypatch.setattr(sys, "stdout", stdout)
+    monkeypatch.setattr(sys, "stderr", stderr)
+
+    configure_console_output()
+
+    assert stdout.kwargs == {"encoding": "utf-8", "errors": "replace"}
+    assert stderr.kwargs == {"encoding": "utf-8", "errors": "replace"}
 
 
 def test_available_game_names_lists_profiles_with_coordinates(tmp_path: Path) -> None:
