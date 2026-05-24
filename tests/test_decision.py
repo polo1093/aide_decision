@@ -8,7 +8,7 @@ import pytest
 
 from objet.entities.buttons import Button, Buttons
 from objet.entities.card import Card, CardsState
-from objet.services.decision import Decision, DecisionConfig
+from objet.services.decision import ButtonState, Decision, DecisionConfig, DecisionInput, decision_input_from_game
 
 
 class DummyPlayer:
@@ -178,6 +178,33 @@ def test_call_when_edge_is_positive_but_not_strong_enough_to_raise() -> None:
 
     assert result.action == "CALL"
     assert result.reason == "call_profitable_or_close"
+
+
+def test_decision_accepts_plain_decision_input_without_game_object() -> None:
+    state = DecisionInput(
+        street="FLOP",
+        hero_cards=["AS", "KS"],
+        buttons=[ButtonState(enabled=True, state="paie", value=20.0)],
+        pot=100.0,
+        equity=0.50,
+        equity_required=0.35,
+        call_max=100.0,
+    )
+    decision = Decision()
+
+    result = decision.decide_input(state)
+
+    assert result.action == "CALL"
+    assert result.reason == "call_profitable_or_close"
+
+
+def test_decision_input_adapter_preserves_runtime_call_amount() -> None:
+    game = DummyGame(_cards_state("AS", "KS"), buttons=DummyButtons(min_value=20.0), street="FLOP")
+
+    state = decision_input_from_game(game)
+
+    assert state.to_call == 20.0
+    assert state.buttons == [ButtonState(enabled=True, state="paie", value=20.0)]
 
 
 def test_raise_when_paid_pot_has_very_strong_equity_and_edge() -> None:
